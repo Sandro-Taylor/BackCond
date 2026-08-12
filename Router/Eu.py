@@ -27,11 +27,11 @@ TIPO_NOMES = {
 
 class AuthenticatedUserResponse(UserResponse):
     idColaborador: uuid.UUID | None
-    tipo: str | None
+    tipo: int | None
+    role_id: int | None
     role: str | None
     cargo: str | None
     ativo: bool | None
-
 
 @router.get("/", response_model=AuthenticatedUserResponse)
 def eu(
@@ -50,7 +50,8 @@ def eu(
         "created_at": user.created_at,
         "idColaborador": colaborador.idColaborador if colaborador else None,
         "tipo": colaborador.tipo if colaborador else None,
-        "role": TIPO_NOMES.get(colaborador.tipo) if colaborador else None,
+        "role_id": colaborador.tipo if colaborador else None,
+        "role": TIPO_NOMES.get(str(colaborador.tipo)) if colaborador else None,
         "cargo": colaborador.cargo if colaborador else None,
         "ativo": colaborador.ativo if colaborador else None,
     }
