@@ -1,9 +1,3 @@
-# ---------------------------------------------------------
-# CONFIGURAÇÕES DA APLICAÇÃO
-# ---------------------------------------------------------
-# Este arquivo carrega as configurações armazenadas no arquivo .env.
-# ---------------------------------------------------------
-
 from pydantic_settings import BaseSettings, SettingsConfigDict
 from fastapi.security import HTTPBearer
 
@@ -21,6 +15,5 @@ class Settings(BaseSettings):
         env_file_encoding="utf-8",
         extra="ignore",
     )
-
 
 settings = Settings()

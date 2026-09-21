@@ -1,7 +1,4 @@
-# ---------------------------------------------------------
-# COLABORADORES (PESSOAS)
-# ---------------------------------------------------------
-
+# (PESSOAS)
 import secrets
 import uuid
 from datetime import date, datetime
@@ -17,17 +14,14 @@ from sqlalchemy.sql import func
 from App.database import Base, get_database
 from App.dependencies import get_current_user
 from App.security import hash_password
-from Router.Users import User
-
+from Router.Usuarios.CriarUsers import User
 
 router = APIRouter(prefix="/colaboradores")
 
 TipoColaborador = Literal[1, 2, 3, 4, 5]  # 1=Visualizador 2=Editor 3=Analista 4=Supervisor 5=Administrador
 
-
 class Colaborador(Base):
     __tablename__ = "colaboradores"
-
     idColaborador: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     idUser: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id"), unique=True, nullable=False)
     idSetor: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
@@ -43,7 +37,6 @@ class Colaborador(Base):
     ddd: Mapped[str | None] = mapped_column(String(2), nullable=True)
     tipo: Mapped[str] = mapped_column(String(2), nullable=False)
 
-
 class PessoaCriar(BaseModel):
     idSetor: uuid.UUID
     nome: str
@@ -56,7 +49,6 @@ class PessoaCriar(BaseModel):
     tipo: TipoColaborador
     ativo: bool = True
 
-
 class PessoaEditar(BaseModel):
     idSetor: uuid.UUID | None = None
     nome: str | None = None
@@ -67,7 +59,6 @@ class PessoaEditar(BaseModel):
     telefone: str | None = None
     ddd: str | None = None
     tipo: TipoColaborador | None = None
-
 
 class PessoaResposta(BaseModel):
     idColaborador: uuid.UUID
@@ -84,13 +75,10 @@ class PessoaResposta(BaseModel):
     telefone: str | None
     ddd: str | None
     tipo: str
-
     model_config = ConfigDict(from_attributes=True)
-
 
 class PessoaCriadaResposta(PessoaResposta):
     senhaTemporaria: str
-
 
 def buscar_pessoa_ou_404(pessoa_id: uuid.UUID, database: Session) -> Colaborador:
     pessoa = database.get(Colaborador, pessoa_id)
@@ -98,10 +86,8 @@ def buscar_pessoa_ou_404(pessoa_id: uuid.UUID, database: Session) -> Colaborador
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Colaborador não encontrado")
     return pessoa
 
-
 def gerar_senha_temporaria() -> str:
     return secrets.token_urlsafe(9)
-
 
 # ROTAS
 @router.post("/", response_model=PessoaCriadaResposta, status_code=status.HTTP_201_CREATED)

@@ -3,7 +3,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 from pydantic import BaseModel, EmailStr
 
-from Router.Users import User, UserStatus
+from Router.Usuarios.CriarUsers import User, UserStatus
 from App.security import create_access_token, verify_password
 from App.database import get_database
 

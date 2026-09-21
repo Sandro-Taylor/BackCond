@@ -12,7 +12,7 @@ from sqlalchemy.orm import Session
 
 from App.security import decode_access_token
 from App.database import get_database
-from Router.Users import User
+from Router.Usuarios.CriarUsers import User
 
 authentication = HTTPBearer()
 

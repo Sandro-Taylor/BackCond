@@ -11,7 +11,6 @@ from enum import Enum
 from sqlalchemy import DateTime, String
 from sqlalchemy.dialects.postgresql import ENUM, UUID
 from sqlalchemy.orm import Mapped, mapped_column
-from sqlalchemy.sql import func
 import uuid
 from datetime import datetime
 from pydantic import BaseModel, ConfigDict, EmailStr, Field
@@ -20,9 +19,9 @@ from App.database import Base
 router = APIRouter()
 
 class UserStatus(str, Enum):
-    active = "active"
-    inactive = "inactive"
-    blocked = "blocked"
+    ativo = "ativo"
+    inativo = "inativo"
+    bloqueado = "bloqueado"
 
 class User(Base):
     __tablename__ = "users"
@@ -30,9 +29,9 @@ class User(Base):
     email: Mapped[str] = mapped_column(String(255),unique=True,nullable=False)
     password_hash: Mapped[str] = mapped_column(String,nullable=False)
     full_name: Mapped[str] = mapped_column(String(150),nullable=False)
-    status: Mapped[UserStatus] = mapped_column(ENUM(UserStatus,name="user_status",create_type=False),default=UserStatus.active,nullable=False)
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True),server_default=func.now())
-    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True),server_default=func.now(),onupdate=func.now())
+    status: Mapped[UserStatus] = mapped_column(ENUM(UserStatus,name="user_status",create_type=False),default=UserStatus.ativo,nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
 
 class UserCreate(BaseModel):
     full_name: str = Field(min_length=3,max_length=150)
@@ -48,7 +47,7 @@ class UserResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
 @router.post("/", response_model=UserResponse, status_code=status.HTTP_201_CREATED)
-def criar_user( user_data: UserCreate, database: Session = Depends(get_database) ):
+def criarUser( user_data: UserCreate, database: Session = Depends(get_database) ):
     existing_user = database.scalar( select(User).where(User.email == user_data.email.lower()))
 
     if existing_user:
