@@ -4,20 +4,14 @@ from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy import text
 
 from config import settings
-
 from App.database import engine
 from Router.Login import router as login
 from Router.Usuarios.CriarUsers import router as criarUser
-
 from Router.Pessoa.CadastrarPessoas import router as criarPessoa
 from Router.Pessoa.EditarPessoas import router as editarPessoa
 from Router.Pessoa.ExcluirPessoas import router as excluirPessoa
 from Router.Pessoa.ListarPessoas import router as listarPessoas
 from Router.Eu import router as eu
-from Router.Pessoa.Moradores import router as colaboradores
-# from Router.Projetos import router as projetos
-from Router.Setores import router as setores
-from Router.Tarefas import router as tarefas
 from Router.Condominios import router as condominios
 from Router.Apartamentos import router as apartamentos
 from Router.Vagas import router as vagas
@@ -40,16 +34,10 @@ app.add_middleware(
 app.include_router(login, prefix="/login", tags=["Autenticação"])
 app.include_router(criarUser, prefix="/users", tags=["Autenticação"])
 app.include_router(eu, prefix="/eu", tags=["Autenticação"])
-# app.include_router(criarOrganizacao, prefix="/org", tags=["Organização"])
-# app.include_router(listarDep, prefix="/dep", tags=["Departamentos"])
-app.include_router(colaboradores, tags=["Colaboradores"])
-app.include_router(setores, tags=["Setores"])
 app.include_router(condominios, tags=["Condomínios"])
 app.include_router(apartamentos, tags=["Apartamentos"])
 app.include_router(vagas, tags=["Vagas"])
 app.include_router(veiculos, tags=["Veículos"])
-app.include_router(tarefas, tags=["Tarefas"])
-
 app.include_router(criarPessoa, prefix="/pessoas", tags=["Pessoas"])
 app.include_router(editarPessoa, prefix="/pessoas", tags=["Pessoas"])
 app.include_router(excluirPessoa, prefix="/pessoas", tags=["Pessoas"])

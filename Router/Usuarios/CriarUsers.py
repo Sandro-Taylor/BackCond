@@ -11,7 +11,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from App.database import get_database
-from App.models import User, UserStatus  # UserStatus: ainda usado por Moradores.py até o 3.3.5
+from App.models import User
 from App.security import hash_password
 
 router = APIRouter()

@@ -16,7 +16,7 @@ from sqlalchemy.orm import Session, selectinload
 
 from App.database import get_database
 from App.dependencies import Contexto, get_contexto
-from App.models import Pessoa, PessoaApartamento, Veiculo
+from App.models import Pessoa, PessoaApartamento
 from App.validacoes import normalizar_cpf
 from Router.Pessoa.CadastrarPessoas import PessoaResponse
 
