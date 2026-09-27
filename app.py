@@ -14,7 +14,11 @@ from Router.Pessoa.EditarPessoas import router as editarPessoa
 from Router.Pessoa.ExcluirPessoas import router as excluirPessoa
 from Router.Pessoa.ListarPessoas import router as listarPessoas
 from Router.Eu import router as eu
-from Router.Pessoa.CadastrarPessoas import router as pessoas
+from Router.Pessoa.Moradores import router as colaboradores
+# from Router.Projetos import router as projetos
+from Router.Setores import router as setores
+from Router.Tarefas import router as tarefas
+from Router.Condominios import router as condominios
 
 app = FastAPI(
     title=settings.app_name,
@@ -29,17 +33,16 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Registro das rotas 
+# Registro das rotas
 app.include_router(login, prefix="/login", tags=["Autenticação"])
 app.include_router(criarUser, prefix="/users", tags=["Autenticação"])
-app.include_router(pessoas, prefix="/pessoas", tags=["Pessoas"])
 app.include_router(eu, prefix="/eu", tags=["Autenticação"])
 # app.include_router(criarOrganizacao, prefix="/org", tags=["Organização"])
 # app.include_router(listarDep, prefix="/dep", tags=["Departamentos"])
-# app.include_router(colaboradores, tags=["Colaboradores"])
-# app.include_router(projetos, tags=["Projetos"])
-# app.include_router(setores, tags=["Setores"])
-# app.include_router(tarefas, tags=["Tarefas"])
+app.include_router(colaboradores, tags=["Colaboradores"])
+app.include_router(setores, tags=["Setores"])
+app.include_router(condominios, tags=["Condomínios"])
+app.include_router(tarefas, tags=["Tarefas"])
 
 app.include_router(criarPessoa, prefix="/pessoas", tags=["Pessoas"])
 app.include_router(editarPessoa, prefix="/pessoas", tags=["Pessoas"])

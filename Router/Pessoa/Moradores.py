@@ -14,28 +14,12 @@ from sqlalchemy.sql import func
 from App.database import Base, get_database
 from App.dependencies import get_current_user
 from App.security import hash_password
-from Router.Usuarios.CriarUsers import User
+from Router.Usuarios.CriarUsers import User, UserStatus
+from App.models import Colaborador
 
 router = APIRouter(prefix="/colaboradores")
 
 TipoColaborador = Literal[1, 2, 3, 4, 5]  # 1=Visualizador 2=Editor 3=Analista 4=Supervisor 5=Administrador
-
-class Colaborador(Base):
-    __tablename__ = "colaboradores"
-    idColaborador: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    idUser: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id"), unique=True, nullable=False)
-    idSetor: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
-    nome: Mapped[str] = mapped_column(String(150), nullable=False)
-    cpf: Mapped[str] = mapped_column(String(11), nullable=False)
-    dataNascimento: Mapped[date] = mapped_column(Date, nullable=False)
-    cargo: Mapped[str | None] = mapped_column(String(120), nullable=True)
-    ativo: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
-    dataCriacao: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
-    dataAtualizacao: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
-    email: Mapped[str | None] = mapped_column(String, nullable=True)
-    telefone: Mapped[str | None] = mapped_column(String(9), nullable=True)
-    ddd: Mapped[str | None] = mapped_column(String(2), nullable=True)
-    tipo: Mapped[str] = mapped_column(String(2), nullable=False)
 
 class PessoaCriar(BaseModel):
     idSetor: uuid.UUID
@@ -94,6 +78,7 @@ def gerar_senha_temporaria() -> str:
 async def criarPessoas(
     dados: PessoaCriar,
     database: Session = Depends(get_database),
+    usuario_atual=Depends(get_current_user),
 ):
     cpf_cadastrado = database.scalar(
         select(Colaborador.idColaborador).where(
@@ -198,7 +183,7 @@ async def arquivarPessoa(
     # bloqueia o login do colaborador arquivado
     usuario = database.get(User, pessoa.idUser)
     if usuario:
-        usuario.status = "blocked"
+        usuario.status = UserStatus.bloqueado
 
     database.commit()
     database.refresh(pessoa)
@@ -216,7 +201,7 @@ async def restaurarPessoa(
 
     usuario = database.get(User, pessoa.idUser)
     if usuario:
-        usuario.status = "active"
+        usuario.status = UserStatus.ativo
 
     database.commit()
     database.refresh(pessoa)

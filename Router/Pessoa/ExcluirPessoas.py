@@ -1,129 +1,66 @@
-from fastapi import Depends, HTTPException, status, APIRouter
-from sqlalchemy.orm import Session
+# ---------------------------------------------------------
+# PESSOAS – EXCLUSÃO
+# ---------------------------------------------------------
+# Só exclui registros do condomínio do contexto.
+# ---------------------------------------------------------
+
 import uuid
 
+from fastapi import APIRouter, Depends, HTTPException, status
+from sqlalchemy import func, select
+from sqlalchemy.orm import Session
+
+from App.consultas import buscar_no_condominio, buscar_vinculo_no_condominio, salvar
 from App.database import get_database
-from Router.Pessoa.CadastrarPessoas import (
-    Pessoa,
-    Apartamento,
-    PessoaApartamento,
-    Vaga,
-    Veiculo,
-)
+from App.dependencies import Contexto, get_contexto
+from App.models import Apartamento, Pessoa, Tarefa, Vaga, Veiculo
 
 router = APIRouter()
 
 
-# =========================================================
-# PESSOA
-# =========================================================
-
+# PESSOA (apaga junto: vínculos, veículos e cadastro de colaborador)
 @router.delete("/{pessoa_id}", status_code=status.HTTP_204_NO_CONTENT)
-def excluirPessoa(
-    pessoa_id: uuid.UUID,
-    database: Session = Depends(get_database)
-):
-    pessoa = database.get(Pessoa, pessoa_id)
+def excluirPessoa(pessoa_id: uuid.UUID, database: Session = Depends(get_database), ctx: Contexto = Depends(get_contexto)):
+    pessoa = buscar_no_condominio(database, Pessoa, pessoa_id, ctx.condominio_id, "Pessoa não encontrada")
 
-    if not pessoa:
+    total_tarefas = database.scalar(select(func.count()).select_from(Tarefa).where(Tarefa.responsavel_id == pessoa.id))
+    if total_tarefas:
         raise HTTPException(
-            status_code=404,
-            detail="Pessoa não encontrada"
+            status_code=status.HTTP_409_CONFLICT,
+            detail=f"Esta pessoa é responsável por {total_tarefas} tarefa(s). Transfira as tarefas ou inative a pessoa.",
         )
 
     database.delete(pessoa)
-    database.commit()
-
-    return None
+    salvar(database)
 
 
-# =========================================================
-# APARTAMENTO
-# =========================================================
-
-@router.delete("/apartamentos/{apartamento_id}", status_code=204)
-def excluirApartamento(
-    apartamento_id: uuid.UUID,
-    database: Session = Depends(get_database)
-):
-    apartamento = database.get(Apartamento, apartamento_id)
-
-    if not apartamento:
-        raise HTTPException(
-            status_code=404,
-            detail="Apartamento não encontrado"
-        )
-
+# APARTAMENTO (apaga junto: vínculos e vagas; veículos das vagas ficam sem vaga)
+@router.delete("/apartamentos/{apartamento_id}", status_code=status.HTTP_204_NO_CONTENT)
+def excluirApartamento(apartamento_id: uuid.UUID, database: Session = Depends(get_database), ctx: Contexto = Depends(get_contexto)):
+    apartamento = buscar_no_condominio(database, Apartamento, apartamento_id, ctx.condominio_id, "Apartamento não encontrado")
     database.delete(apartamento)
-    database.commit()
-
-    return None
+    salvar(database)
 
 
-# =========================================================
 # VÍNCULO PESSOA / APARTAMENTO
-# =========================================================
-
-@router.delete("/vinculos/{vinculo_id}", status_code=204)
-def excluirVinculo(
-    vinculo_id: uuid.UUID,
-    database: Session = Depends(get_database)
-):
-    vinculo = database.get(PessoaApartamento, vinculo_id)
-
-    if not vinculo:
-        raise HTTPException(
-            status_code=404,
-            detail="Vínculo não encontrado"
-        )
-
+@router.delete("/vinculos/{vinculo_id}", status_code=status.HTTP_204_NO_CONTENT)
+def excluirVinculo(vinculo_id: uuid.UUID, database: Session = Depends(get_database), ctx: Contexto = Depends(get_contexto)):
+    vinculo = buscar_vinculo_no_condominio(database, vinculo_id, ctx.condominio_id)
     database.delete(vinculo)
-    database.commit()
-
-    return None
+    salvar(database)
 
 
-# =========================================================
-# VAGA
-# =========================================================
-
-@router.delete("/vagas/{vaga_id}", status_code=204)
-def excluirVaga(
-    vaga_id: uuid.UUID,
-    database: Session = Depends(get_database)
-):
-    vaga = database.get(Vaga, vaga_id)
-
-    if not vaga:
-        raise HTTPException(
-            status_code=404,
-            detail="Vaga não encontrada"
-        )
-
+# VAGA (veículos da vaga ficam sem vaga)
+@router.delete("/vagas/{vaga_id}", status_code=status.HTTP_204_NO_CONTENT)
+def excluirVaga(vaga_id: uuid.UUID, database: Session = Depends(get_database), ctx: Contexto = Depends(get_contexto)):
+    vaga = buscar_no_condominio(database, Vaga, vaga_id, ctx.condominio_id, "Vaga não encontrada")
     database.delete(vaga)
-    database.commit()
-
-    return None
+    salvar(database)
 
 
-# =========================================================
 # VEÍCULO
-# =========================================================
-
-@router.delete("/veiculos/{veiculo_id}", status_code=204)
-def excluirVeiculo(
-    veiculo_id: uuid.UUID,
-    database: Session = Depends(get_database)
-):
-    veiculo = database.get(Veiculo, veiculo_id)
-
-    if not veiculo:
-        raise HTTPException(
-            status_code=404,
-            detail="Veículo não encontrado"
-        )
-
+@router.delete("/veiculos/{veiculo_id}", status_code=status.HTTP_204_NO_CONTENT)
+def excluirVeiculo(veiculo_id: uuid.UUID, database: Session = Depends(get_database), ctx: Contexto = Depends(get_contexto)):
+    veiculo = buscar_no_condominio(database, Veiculo, veiculo_id, ctx.condominio_id, "Veículo não encontrado")
     database.delete(veiculo)
-    database.commit()
-
-    return None
+    salvar(database)

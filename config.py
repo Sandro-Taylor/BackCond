@@ -4,7 +4,7 @@ from fastapi.security import HTTPBearer
 authentication = HTTPBearer()
 
 class Settings(BaseSettings):
-    app_name: str = "GT - Gerenciador de Tarefas"
+    app_name: str = "Gestão Condominial"
     app_version: str = "1.0.0"
     database_url: str
     jwt_secret: str
