@@ -64,7 +64,7 @@ CREATE TABLE pessoas (
   condominio_id   uuid NOT NULL REFERENCES condominios(id) ON DELETE RESTRICT,
   user_id         uuid REFERENCES users(id) ON DELETE SET NULL,
   perfil          varchar(20) NOT NULL DEFAULT 'MORADOR'
-                  CHECK (perfil IN ('MORADOR','SINDICO','CONSELHEIRO','COLABORADOR')),
+                  CONSTRAINT pessoas_perfil_check CHECK (perfil IN ('MORADOR','SINDICO','CONSELHEIRO','COLABORADOR','PRESTADOR')),
   nome            varchar(150) NOT NULL,
   cpf             varchar(11) CHECK (cpf ~ '^[0-9]{11}$'),
   email           varchar(255) CHECK (email = lower(email)),
@@ -95,11 +95,24 @@ CREATE TABLE pessoas_apartamentos (
   id             uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   pessoa_id      uuid NOT NULL REFERENCES pessoas(id) ON DELETE CASCADE,
   apartamento_id uuid NOT NULL REFERENCES apartamentos(id) ON DELETE CASCADE,
-  tipo_relacao   varchar(20) NOT NULL CHECK (tipo_relacao IN ('PROPRIETARIO','MORADOR')),
+  tipo_relacao   varchar(20) NOT NULL CONSTRAINT pessoas_apartamentos_tipo_relacao_check
+                 CHECK (tipo_relacao IN ('PROPRIETARIO','INQUILINO','RESIDENTE')),
+  reside         boolean NOT NULL DEFAULT true,   -- proprietário: mora ou não no prédio
+  titular_vinculo_id uuid REFERENCES pessoas_apartamentos(id) ON DELETE CASCADE,  -- residente: a quem está ligado
+  parentesco     varchar(30) CONSTRAINT pessoas_apartamentos_parentesco_check
+                 CHECK (parentesco IN ('CONJUGE','FILHO','ENTEADO','PAI_MAE','SOGRO','IRMAO',
+                                       'AVO','NETO','OUTRO_PARENTE','EMPREGADO_DOMESTICO','OUTRO')),
   principal      boolean NOT NULL DEFAULT false,
   ativo          boolean NOT NULL DEFAULT true,
   created_at     timestamptz NOT NULL DEFAULT now(),
-  UNIQUE (pessoa_id, apartamento_id)
+  UNIQUE (pessoa_id, apartamento_id),
+  -- residente exige titular e parentesco; proprietário/inquilino não têm nenhum dos dois
+  CONSTRAINT pessoas_apartamentos_residente_check CHECK (
+    (tipo_relacao = 'RESIDENTE' AND titular_vinculo_id IS NOT NULL AND parentesco IS NOT NULL)
+    OR (tipo_relacao <> 'RESIDENTE' AND titular_vinculo_id IS NULL AND parentesco IS NULL)
+  ),
+  -- só o proprietário pode não residir
+  CONSTRAINT pessoas_apartamentos_reside_check CHECK (tipo_relacao = 'PROPRIETARIO' OR reside)
 );
 CREATE UNIQUE INDEX pessoas_apartamentos_um_principal
   ON pessoas_apartamentos (pessoa_id) WHERE principal;
@@ -108,20 +121,24 @@ CREATE UNIQUE INDEX pessoas_apartamentos_um_principal
 CREATE TABLE vagas (
   id             uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   condominio_id  uuid NOT NULL REFERENCES condominios(id) ON DELETE RESTRICT,
-  apartamento_id uuid NOT NULL REFERENCES apartamentos(id) ON DELETE CASCADE,
+  -- FIXA: pode ser de um apartamento (ou estar livre); ROTATIVA: uso comum, sem apartamento
+  tipo           varchar(10) NOT NULL DEFAULT 'FIXA' CHECK (tipo IN ('FIXA','ROTATIVA')),
+  apartamento_id uuid REFERENCES apartamentos(id) ON DELETE SET NULL,
   numero         varchar(20) NOT NULL,
   localizacao    varchar(100),
   observacao     text,
   ativo          boolean NOT NULL DEFAULT true,
   created_at     timestamptz NOT NULL DEFAULT now(),
   updated_at     timestamptz NOT NULL DEFAULT now(),
-  UNIQUE (condominio_id, numero)
+  UNIQUE (condominio_id, numero),
+  CONSTRAINT vagas_rotativa_sem_apartamento_check CHECK (tipo = 'FIXA' OR apartamento_id IS NULL)
 );
 
 CREATE TABLE veiculos (
   id            uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   condominio_id uuid NOT NULL REFERENCES condominios(id) ON DELETE RESTRICT,
-  pessoa_id     uuid NOT NULL REFERENCES pessoas(id) ON DELETE CASCADE,
+  apartamento_id uuid NOT NULL REFERENCES apartamentos(id) ON DELETE CASCADE,
+  pessoa_id     uuid REFERENCES pessoas(id) ON DELETE SET NULL,  -- condutor (opcional)
   vaga_id       uuid REFERENCES vagas(id) ON DELETE SET NULL,
   placa         varchar(7) CHECK (placa ~ '^[A-Z0-9]{7}$'),
   marca         varchar(50),
@@ -134,6 +151,7 @@ CREATE TABLE veiculos (
   UNIQUE (condominio_id, placa)
 );
 CREATE INDEX veiculos_pessoa_idx ON veiculos (pessoa_id);
+CREATE INDEX veiculos_apartamento_idx ON veiculos (apartamento_id);
 
 -- 6. SETORES E COLABORADORES
 CREATE TABLE setores (

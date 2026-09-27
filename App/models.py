@@ -20,8 +20,13 @@ class UserStatus(str, Enum):
     inativo = "inativo"
     bloqueado = "bloqueado"
 
-PerfilPessoa = Literal["MORADOR", "SINDICO", "CONSELHEIRO", "COLABORADOR"]
-TipoRelacao = Literal["PROPRIETARIO", "MORADOR"]
+PerfilPessoa = Literal["MORADOR", "SINDICO", "CONSELHEIRO", "COLABORADOR", "PRESTADOR"]
+TipoVaga = Literal["FIXA", "ROTATIVA"]
+TipoRelacao = Literal["PROPRIETARIO", "INQUILINO", "RESIDENTE"]
+Parentesco = Literal[
+    "CONJUGE", "FILHO", "ENTEADO", "PAI_MAE", "SOGRO", "IRMAO",
+    "AVO", "NETO", "OUTRO_PARENTE", "EMPREGADO_DOMESTICO", "OUTRO",
+]
 PrioridadeTarefa = Literal["baixa", "media", "alta", "urgente"]
 StatusTarefa = Literal["pendente", "em_andamento", "concluida", "cancelada"]
 
@@ -111,7 +116,7 @@ class Pessoa(Base):
 
     usuario: Mapped["User | None"] = relationship()
     apartamentos: Mapped[list["PessoaApartamento"]] = relationship(back_populates="pessoa", cascade="all, delete-orphan", passive_deletes=True)
-    veiculos: Mapped[list["Veiculo"]] = relationship(back_populates="pessoa", cascade="all, delete-orphan", passive_deletes=True)
+    veiculos: Mapped[list["Veiculo"]] = relationship(back_populates="pessoa", passive_deletes=True)  # pessoa = condutor; ao excluir, o veículo fica sem condutor
     colaborador: Mapped["Colaborador | None"] = relationship(back_populates="pessoa", uselist=False, cascade="all, delete-orphan", passive_deletes=True)
 
 
@@ -133,7 +138,8 @@ class Apartamento(Base):
     updated_at: Mapped[datetime] = coluna_updated_at()
 
     pessoas: Mapped[list["PessoaApartamento"]] = relationship(back_populates="apartamento", cascade="all, delete-orphan", passive_deletes=True)
-    vagas: Mapped[list["Vaga"]] = relationship(back_populates="apartamento", cascade="all, delete-orphan", passive_deletes=True)
+    vagas: Mapped[list["Vaga"]] = relationship(back_populates="apartamento", passive_deletes=True)  # ao excluir o apto, a vaga fica livre
+    veiculos: Mapped[list["Veiculo"]] = relationship(back_populates="apartamento", cascade="all, delete-orphan", passive_deletes=True)
 
 
 class PessoaApartamento(Base):
@@ -143,12 +149,18 @@ class PessoaApartamento(Base):
     pessoa_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("pessoas.id", ondelete="CASCADE"), nullable=False)
     apartamento_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("apartamentos.id", ondelete="CASCADE"), nullable=False)
     tipo_relacao: Mapped[str] = mapped_column(String(20), nullable=False)
+    reside: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True, server_default="true")  # usado para o proprietário
+    titular_vinculo_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey("pessoas_apartamentos.id", ondelete="CASCADE"))
+    parentesco: Mapped[str | None] = mapped_column(String(30))
     principal: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default="false")
     ativo: Mapped[bool] = coluna_ativo()
     created_at: Mapped[datetime] = coluna_created_at()
 
     pessoa: Mapped["Pessoa"] = relationship(back_populates="apartamentos")
     apartamento: Mapped["Apartamento"] = relationship(back_populates="pessoas")
+    # RESIDENTE -> vínculo do titular (proprietário ou inquilino) ao qual está ligado
+    titular: Mapped["PessoaApartamento | None"] = relationship(remote_side="PessoaApartamento.id", back_populates="residentes")
+    residentes: Mapped[list["PessoaApartamento"]] = relationship(back_populates="titular", cascade="all, delete-orphan", passive_deletes=True)
 
 
 # =========================================================
@@ -160,7 +172,9 @@ class Vaga(Base):
     __table_args__ = (UniqueConstraint("condominio_id", "numero"),)
     id: Mapped[uuid.UUID] = coluna_id()
     condominio_id: Mapped[uuid.UUID] = coluna_condominio()
-    apartamento_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("apartamentos.id", ondelete="CASCADE"), nullable=False)
+    # FIXA: pode ser de um apartamento (ou estar livre); ROTATIVA: uso comum, nunca de um apartamento
+    tipo: Mapped[str] = mapped_column(String(10), nullable=False, default="FIXA", server_default="FIXA")
+    apartamento_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey("apartamentos.id", ondelete="SET NULL"))
     numero: Mapped[str] = mapped_column(String(20), nullable=False)
     localizacao: Mapped[str | None] = mapped_column(String(100))
     observacao: Mapped[str | None] = mapped_column(Text)
@@ -168,7 +182,7 @@ class Vaga(Base):
     created_at: Mapped[datetime] = coluna_created_at()
     updated_at: Mapped[datetime] = coluna_updated_at()
 
-    apartamento: Mapped["Apartamento"] = relationship(back_populates="vagas")
+    apartamento: Mapped["Apartamento | None"] = relationship(back_populates="vagas")
     veiculos: Mapped[list["Veiculo"]] = relationship(back_populates="vaga", passive_deletes=True)
 
 
@@ -177,7 +191,8 @@ class Veiculo(Base):
     __table_args__ = (UniqueConstraint("condominio_id", "placa"),)
     id: Mapped[uuid.UUID] = coluna_id()
     condominio_id: Mapped[uuid.UUID] = coluna_condominio()
-    pessoa_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("pessoas.id", ondelete="CASCADE"), nullable=False, index=True)
+    apartamento_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("apartamentos.id", ondelete="CASCADE"), nullable=False, index=True)
+    pessoa_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey("pessoas.id", ondelete="SET NULL"), index=True)  # condutor (opcional)
     vaga_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey("vagas.id", ondelete="SET NULL"))
     placa: Mapped[str | None] = mapped_column(String(7))
     marca: Mapped[str | None] = mapped_column(String(50))
@@ -188,7 +203,8 @@ class Veiculo(Base):
     created_at: Mapped[datetime] = coluna_created_at()
     updated_at: Mapped[datetime] = coluna_updated_at()
 
-    pessoa: Mapped["Pessoa"] = relationship(back_populates="veiculos")
+    apartamento: Mapped["Apartamento"] = relationship(back_populates="veiculos")
+    pessoa: Mapped["Pessoa | None"] = relationship(back_populates="veiculos")
     vaga: Mapped["Vaga | None"] = relationship(back_populates="veiculos")
 
 

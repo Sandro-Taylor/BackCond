@@ -11,12 +11,12 @@ from datetime import datetime
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel, ConfigDict, EmailStr, Field, field_validator
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from App.database import get_database
-from App.dependencies import exigir_admin_sistema, get_current_user
-from App.models import Condominio, Pessoa, User
+from App.dependencies import Contexto, exigir_admin_sistema, get_contexto, get_current_user
+from App.models import Apartamento, Condominio, Pessoa, User, Vaga, Veiculo
 from App.validacoes import normalizar_cep, normalizar_cnpj, normalizar_email, normalizar_telefone, normalizar_uf
 
 router = APIRouter(prefix="/condominios")
@@ -88,6 +88,16 @@ class CondominioResposta(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
 
+class ResumoCondominio(BaseModel):
+    condominio: CondominioResposta
+    total_apartamentos: int
+    total_vagas: int
+    vagas_fixas: int
+    vagas_rotativas: int
+    total_pessoas: int
+    total_veiculos: int
+
+
 # FUNÇÕES AUXILIARES
 
 def buscar_condominio_ou_404(condominio_id: uuid.UUID, database: Session) -> Condominio:
@@ -136,6 +146,25 @@ async def listarCondominios(database: Session = Depends(get_database), usuario: 
     else:
         consulta = consulta_condominios_do_usuario(usuario)
     return database.scalars(consulta.order_by(Condominio.nome)).all()
+
+
+@router.get("/atual/resumo", response_model=ResumoCondominio)
+async def resumoCondominio(database: Session = Depends(get_database), ctx: Contexto = Depends(get_contexto)):
+    # dados e números do condomínio que está sendo acessado (página inicial)
+    condominio = buscar_condominio_ou_404(ctx.condominio_id, database)
+
+    def contar(modelo, *filtros) -> int:
+        return database.scalar(select(func.count()).select_from(modelo).where(modelo.condominio_id == ctx.condominio_id, *filtros)) or 0
+
+    return {
+        "condominio": condominio,
+        "total_apartamentos": contar(Apartamento),
+        "total_vagas": contar(Vaga),
+        "vagas_fixas": contar(Vaga, Vaga.tipo == "FIXA"),
+        "vagas_rotativas": contar(Vaga, Vaga.tipo == "ROTATIVA"),
+        "total_pessoas": contar(Pessoa),
+        "total_veiculos": contar(Veiculo),
+    }
 
 
 @router.get("/{condominio_id}", response_model=CondominioResposta)

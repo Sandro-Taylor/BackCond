@@ -19,6 +19,9 @@ from Router.Pessoa.Moradores import router as colaboradores
 from Router.Setores import router as setores
 from Router.Tarefas import router as tarefas
 from Router.Condominios import router as condominios
+from Router.Apartamentos import router as apartamentos
+from Router.Vagas import router as vagas
+from Router.Veiculos import router as veiculos
 
 app = FastAPI(
     title=settings.app_name,
@@ -42,6 +45,9 @@ app.include_router(eu, prefix="/eu", tags=["Autenticação"])
 app.include_router(colaboradores, tags=["Colaboradores"])
 app.include_router(setores, tags=["Setores"])
 app.include_router(condominios, tags=["Condomínios"])
+app.include_router(apartamentos, tags=["Apartamentos"])
+app.include_router(vagas, tags=["Vagas"])
+app.include_router(veiculos, tags=["Veículos"])
 app.include_router(tarefas, tags=["Tarefas"])
 
 app.include_router(criarPessoa, prefix="/pessoas", tags=["Pessoas"])
