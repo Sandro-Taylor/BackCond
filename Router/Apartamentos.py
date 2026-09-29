@@ -22,8 +22,11 @@ from sqlalchemy.orm import Session, selectinload
 
 from App.consultas import buscar_no_condominio, garantir_unico, salvar, texto
 from App.database import get_database
-from App.dependencies import Contexto, get_contexto
-from App.models import Apartamento, Parentesco, Pessoa, PessoaApartamento, TipoRelacao, Vaga, Veiculo
+from App.dependencies import (
+    Contexto, apartamentos_do_usuario, exigir_edicao_apartamento, exigir_gestao, exigir_leitura_apartamento,
+    get_contexto, negar,
+)
+from App.models import Apartamento, Cota, Parentesco, Pessoa, PessoaApartamento, TipoRelacao, Vaga, Veiculo
 from App.validacoes import normalizar_placa
 from Router.Pessoa.CadastrarPessoas import PessoaDados
 
@@ -294,9 +297,14 @@ def validar_veiculo(database: Session, apartamento: Apartamento, dados: VeiculoD
 
 @router.get("/", response_model=list[ApartamentoResumo])
 def listarApartamentos(database: Session = Depends(get_database), ctx: Contexto = Depends(get_contexto)):
+    consulta = select(Apartamento).where(Apartamento.condominio_id == ctx.condominio_id)
+    if not ctx.ve_tudo:
+        if ctx.perfil != "MORADOR":
+            negar()
+        consulta = consulta.where(Apartamento.id.in_(apartamentos_do_usuario(database, ctx)))
+
     apartamentos = database.scalars(
-        select(Apartamento)
-        .where(Apartamento.condominio_id == ctx.condominio_id)
+        consulta
         .options(
             selectinload(Apartamento.pessoas).selectinload(PessoaApartamento.pessoa),
             selectinload(Apartamento.vagas),
@@ -325,7 +333,7 @@ def listarApartamentos(database: Session = Depends(get_database), ctx: Contexto 
 
 
 @router.post("/", response_model=ApartamentoDetalhe, status_code=status.HTTP_201_CREATED)
-def criarApartamento(dados: ApartamentoDados, database: Session = Depends(get_database), ctx: Contexto = Depends(get_contexto)):
+def criarApartamento(dados: ApartamentoDados, database: Session = Depends(get_database), ctx: Contexto = Depends(exigir_gestao)):
     bloco = (dados.bloco or "").strip().upper()
     numero = dados.numero.strip()
     garantir_unico(database, Apartamento, ctx.condominio_id, {"bloco": bloco, "numero": numero}, "Já existe um apartamento com este bloco e número")
@@ -338,11 +346,12 @@ def criarApartamento(dados: ApartamentoDados, database: Session = Depends(get_da
 
 @router.get("/{apartamento_id}", response_model=ApartamentoDetalhe)
 def buscarApartamento(apartamento_id: uuid.UUID, database: Session = Depends(get_database), ctx: Contexto = Depends(get_contexto)):
+    exigir_leitura_apartamento(database, ctx, apartamento_id)
     return detalhe(database, apartamento_id, ctx.condominio_id)
 
 
 @router.put("/{apartamento_id}", response_model=ApartamentoDetalhe)
-def editarApartamento(apartamento_id: uuid.UUID, dados: ApartamentoEditar, database: Session = Depends(get_database), ctx: Contexto = Depends(get_contexto)):
+def editarApartamento(apartamento_id: uuid.UUID, dados: ApartamentoEditar, database: Session = Depends(get_database), ctx: Contexto = Depends(exigir_gestao)):
     apartamento = buscar_no_condominio(database, Apartamento, apartamento_id, ctx.condominio_id, "Apartamento não encontrado")
 
     bloco = (dados.bloco or "").strip().upper()
@@ -359,9 +368,11 @@ def editarApartamento(apartamento_id: uuid.UUID, dados: ApartamentoEditar, datab
 
 
 @router.delete("/{apartamento_id}", status_code=status.HTTP_204_NO_CONTENT)
-def excluirApartamento(apartamento_id: uuid.UUID, database: Session = Depends(get_database), ctx: Contexto = Depends(get_contexto)):
+def excluirApartamento(apartamento_id: uuid.UUID, database: Session = Depends(get_database), ctx: Contexto = Depends(exigir_gestao)):
     # apaga junto: vínculos com pessoas e veículos da unidade; as vagas ficam livres e as pessoas continuam cadastradas
     apartamento = buscar_no_condominio(database, Apartamento, apartamento_id, ctx.condominio_id, "Apartamento não encontrado")
+    if database.scalar(select(Cota.id).where(Cota.apartamento_id == apartamento.id).limit(1)):
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Este apartamento tem cotas no financeiro. Desative o apartamento em vez de excluir")
     database.delete(apartamento)
     salvar(database)
 
@@ -372,6 +383,7 @@ def excluirApartamento(apartamento_id: uuid.UUID, database: Session = Depends(ge
 
 @router.post("/{apartamento_id}/pessoas", response_model=ApartamentoDetalhe, status_code=status.HTTP_201_CREATED)
 def adicionarPessoa(apartamento_id: uuid.UUID, dados: AdicionarPessoa, database: Session = Depends(get_database), ctx: Contexto = Depends(get_contexto)):
+    exigir_edicao_apartamento(database, ctx, apartamento_id)
     cid = ctx.condominio_id
     apartamento = buscar_no_condominio(database, Apartamento, apartamento_id, cid, "Apartamento não encontrado")
 
@@ -427,6 +439,7 @@ def adicionarPessoa(apartamento_id: uuid.UUID, dados: AdicionarPessoa, database:
 
 @router.put("/{apartamento_id}/pessoas/{vinculo_id}", response_model=ApartamentoDetalhe)
 def editarVinculo(apartamento_id: uuid.UUID, vinculo_id: uuid.UUID, dados: VinculoEditar, database: Session = Depends(get_database), ctx: Contexto = Depends(get_contexto)):
+    exigir_edicao_apartamento(database, ctx, apartamento_id)
     apartamento = buscar_no_condominio(database, Apartamento, apartamento_id, ctx.condominio_id, "Apartamento não encontrado")
     vinculo = buscar_do_apartamento(database, PessoaApartamento, vinculo_id, apartamento.id, "Vínculo não encontrado")
 
@@ -447,6 +460,7 @@ def editarVinculo(apartamento_id: uuid.UUID, vinculo_id: uuid.UUID, dados: Vincu
 
 @router.delete("/{apartamento_id}/pessoas/{vinculo_id}", response_model=ApartamentoDetalhe)
 def removerPessoa(apartamento_id: uuid.UUID, vinculo_id: uuid.UUID, database: Session = Depends(get_database), ctx: Contexto = Depends(get_contexto)):
+    exigir_edicao_apartamento(database, ctx, apartamento_id)
     # remove só o vínculo (a pessoa continua cadastrada); residentes ligados a este titular saem junto
     apartamento = buscar_no_condominio(database, Apartamento, apartamento_id, ctx.condominio_id, "Apartamento não encontrado")
     vinculo = buscar_do_apartamento(database, PessoaApartamento, vinculo_id, apartamento.id, "Vínculo não encontrado")
@@ -460,7 +474,7 @@ def removerPessoa(apartamento_id: uuid.UUID, vinculo_id: uuid.UUID, database: Se
 # =========================================================
 
 @router.post("/{apartamento_id}/vagas", response_model=ApartamentoDetalhe, status_code=status.HTTP_201_CREATED)
-def adicionarVaga(apartamento_id: uuid.UUID, dados: VagaDados, database: Session = Depends(get_database), ctx: Contexto = Depends(get_contexto)):
+def adicionarVaga(apartamento_id: uuid.UUID, dados: VagaDados, database: Session = Depends(get_database), ctx: Contexto = Depends(exigir_gestao)):
     apartamento = buscar_no_condominio(database, Apartamento, apartamento_id, ctx.condominio_id, "Apartamento não encontrado")
     numero = dados.numero.strip()
     garantir_unico(database, Vaga, ctx.condominio_id, {"numero": numero}, f"Vaga {numero} já cadastrada neste condomínio")
@@ -478,7 +492,7 @@ def adicionarVaga(apartamento_id: uuid.UUID, dados: VagaDados, database: Session
 
 
 @router.put("/{apartamento_id}/vagas/{vaga_id}", response_model=ApartamentoDetalhe)
-def editarVaga(apartamento_id: uuid.UUID, vaga_id: uuid.UUID, dados: VagaEditar, database: Session = Depends(get_database), ctx: Contexto = Depends(get_contexto)):
+def editarVaga(apartamento_id: uuid.UUID, vaga_id: uuid.UUID, dados: VagaEditar, database: Session = Depends(get_database), ctx: Contexto = Depends(exigir_gestao)):
     apartamento = buscar_no_condominio(database, Apartamento, apartamento_id, ctx.condominio_id, "Apartamento não encontrado")
     vaga = buscar_do_apartamento(database, Vaga, vaga_id, apartamento.id, "Vaga não encontrada")
     numero = dados.numero.strip()
@@ -493,7 +507,7 @@ def editarVaga(apartamento_id: uuid.UUID, vaga_id: uuid.UUID, dados: VagaEditar,
 
 
 @router.post("/{apartamento_id}/vagas/{vaga_id}/vincular", response_model=ApartamentoDetalhe)
-def vincularVaga(apartamento_id: uuid.UUID, vaga_id: uuid.UUID, database: Session = Depends(get_database), ctx: Contexto = Depends(get_contexto)):
+def vincularVaga(apartamento_id: uuid.UUID, vaga_id: uuid.UUID, database: Session = Depends(get_database), ctx: Contexto = Depends(exigir_gestao)):
     # liga uma vaga FIXA livre (cadastrada na tela Vagas) a este apartamento
     apartamento = buscar_no_condominio(database, Apartamento, apartamento_id, ctx.condominio_id, "Apartamento não encontrado")
     vaga = buscar_no_condominio(database, Vaga, vaga_id, ctx.condominio_id, "Vaga não encontrada")
@@ -507,7 +521,7 @@ def vincularVaga(apartamento_id: uuid.UUID, vaga_id: uuid.UUID, database: Sessio
 
 
 @router.delete("/{apartamento_id}/vagas/{vaga_id}", response_model=ApartamentoDetalhe)
-def liberarVaga(apartamento_id: uuid.UUID, vaga_id: uuid.UUID, database: Session = Depends(get_database), ctx: Contexto = Depends(get_contexto)):
+def liberarVaga(apartamento_id: uuid.UUID, vaga_id: uuid.UUID, database: Session = Depends(get_database), ctx: Contexto = Depends(exigir_gestao)):
     # tira a vaga do apartamento (ela continua cadastrada, livre); os veículos que a usavam passam a rotativo
     apartamento = buscar_no_condominio(database, Apartamento, apartamento_id, ctx.condominio_id, "Apartamento não encontrado")
     vaga = buscar_do_apartamento(database, Vaga, vaga_id, apartamento.id, "Vaga não encontrada")
@@ -523,6 +537,7 @@ def liberarVaga(apartamento_id: uuid.UUID, vaga_id: uuid.UUID, database: Session
 
 @router.post("/{apartamento_id}/veiculos", response_model=ApartamentoDetalhe, status_code=status.HTTP_201_CREATED)
 def adicionarVeiculo(apartamento_id: uuid.UUID, dados: VeiculoDados, database: Session = Depends(get_database), ctx: Contexto = Depends(get_contexto)):
+    exigir_edicao_apartamento(database, ctx, apartamento_id)
     apartamento = buscar_no_condominio(database, Apartamento, apartamento_id, ctx.condominio_id, "Apartamento não encontrado")
     validar_veiculo(database, apartamento, dados)
     if dados.placa:
@@ -545,6 +560,7 @@ def adicionarVeiculo(apartamento_id: uuid.UUID, dados: VeiculoDados, database: S
 
 @router.put("/{apartamento_id}/veiculos/{veiculo_id}", response_model=ApartamentoDetalhe)
 def editarVeiculo(apartamento_id: uuid.UUID, veiculo_id: uuid.UUID, dados: VeiculoEditar, database: Session = Depends(get_database), ctx: Contexto = Depends(get_contexto)):
+    exigir_edicao_apartamento(database, ctx, apartamento_id)
     apartamento = buscar_no_condominio(database, Apartamento, apartamento_id, ctx.condominio_id, "Apartamento não encontrado")
     veiculo = buscar_do_apartamento(database, Veiculo, veiculo_id, apartamento.id, "Veículo não encontrado")
     validar_veiculo(database, apartamento, dados)
@@ -565,6 +581,7 @@ def editarVeiculo(apartamento_id: uuid.UUID, veiculo_id: uuid.UUID, dados: Veicu
 
 @router.delete("/{apartamento_id}/veiculos/{veiculo_id}", response_model=ApartamentoDetalhe)
 def excluirVeiculo(apartamento_id: uuid.UUID, veiculo_id: uuid.UUID, database: Session = Depends(get_database), ctx: Contexto = Depends(get_contexto)):
+    exigir_edicao_apartamento(database, ctx, apartamento_id)
     apartamento = buscar_no_condominio(database, Apartamento, apartamento_id, ctx.condominio_id, "Apartamento não encontrado")
     veiculo = buscar_do_apartamento(database, Veiculo, veiculo_id, apartamento.id, "Veículo não encontrado")
     database.delete(veiculo)

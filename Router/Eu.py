@@ -3,19 +3,23 @@
 # ---------------------------------------------------------
 # Retorna os dados do usuário logado e os condomínios que ele
 # pode acessar, com o perfil em cada um.
+# Troca de senha: obrigatória no primeiro acesso (senha
+# temporária) e disponível a qualquer momento.
 # ---------------------------------------------------------
 
 import uuid
 from datetime import datetime
 
-from fastapi import APIRouter, Depends
-from pydantic import BaseModel
+from fastapi import APIRouter, Depends, HTTPException, status
+from pydantic import BaseModel, Field
 from sqlalchemy import and_, select
 from sqlalchemy.orm import Session
 
 from App.database import get_database
-from App.dependencies import get_current_user
+from App.consultas import salvar
+from App.dependencies import get_usuario_logado
 from App.models import Condominio, Pessoa, User
+from App.security import hash_password, verify_password
 
 router = APIRouter()
 
@@ -33,12 +37,13 @@ class EuResposta(BaseModel):
     email: str
     status: str
     admin_sistema: bool
+    trocar_senha: bool
     created_at: datetime
     condominios: list[CondominioDoUsuario]
 
 
 @router.get("/", response_model=EuResposta)
-def eu(user: User = Depends(get_current_user), database: Session = Depends(get_database)):
+def eu(user: User = Depends(get_usuario_logado), database: Session = Depends(get_database)):
     if user.admin_sistema:
         # ADM do sistema: todos os condomínios ativos
         linhas = database.execute(
@@ -64,6 +69,24 @@ def eu(user: User = Depends(get_current_user), database: Session = Depends(get_d
         "email": user.email,
         "status": user.status,
         "admin_sistema": user.admin_sistema,
+        "trocar_senha": user.trocar_senha,
         "created_at": user.created_at,
         "condominios": condominios,
     }
+
+
+class TrocarSenha(BaseModel):
+    senha_atual: str
+    nova_senha: str = Field(min_length=8, max_length=128)
+
+
+@router.post("/senha", status_code=204)
+def trocarSenha(dados: TrocarSenha, user: User = Depends(get_usuario_logado), database: Session = Depends(get_database)):
+    if not verify_password(dados.senha_atual, user.password_hash):
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Senha atual incorreta")
+    if dados.nova_senha == dados.senha_atual:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="A nova senha precisa ser diferente da atual")
+
+    user.password_hash = hash_password(dados.nova_senha)
+    user.trocar_senha = False
+    salvar(database)

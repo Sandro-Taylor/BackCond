@@ -15,10 +15,11 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session, selectinload
 
 from App.database import get_database
-from App.dependencies import Contexto, get_contexto
-from App.models import Pessoa, PessoaApartamento
+from App.dependencies import Contexto, apartamentos_do_usuario, get_contexto, negar
+from App.models import Funcionario, Pessoa, PessoaApartamento
 from App.validacoes import normalizar_cpf
 from Router.Pessoa.CadastrarPessoas import PessoaResponse
+from Router.Pessoa.FuncionarioPessoas import FichaResposta
 
 router = APIRouter()
 
@@ -64,6 +65,7 @@ class PessoaLista(BaseModel):
     created_at: datetime
     apartamentos: list[VinculoDaPessoa]
     veiculos: list[VeiculoDaPessoa]
+    funcionario: FichaResposta | None
 
 
 def montar_pessoa(pessoa: Pessoa) -> dict:
@@ -92,18 +94,30 @@ def montar_pessoa(pessoa: Pessoa) -> dict:
             for vinculo in pessoa.apartamentos
         ],
         "veiculos": pessoa.veiculos,
+        "funcionario": pessoa.funcionario,
     }
 
 
 @router.get("/", response_model=list[PessoaLista])
 def listarPessoas(database: Session = Depends(get_database), ctx: Contexto = Depends(get_contexto)):
+    consulta = select(Pessoa).where(Pessoa.condominio_id == ctx.condominio_id)
+    if not ctx.ve_tudo:
+        # morador: só as pessoas ligadas às próprias unidades
+        if ctx.perfil != "MORADOR":
+            negar()
+        consulta = consulta.where(
+            Pessoa.id.in_(
+                select(PessoaApartamento.pessoa_id).where(PessoaApartamento.apartamento_id.in_(apartamentos_do_usuario(database, ctx)))
+            )
+        )
+
     pessoas = database.scalars(
-        select(Pessoa)
-        .where(Pessoa.condominio_id == ctx.condominio_id)
+        consulta
         .options(
             selectinload(Pessoa.apartamentos).selectinload(PessoaApartamento.apartamento),
             selectinload(Pessoa.apartamentos).selectinload(PessoaApartamento.titular).selectinload(PessoaApartamento.pessoa),
             selectinload(Pessoa.veiculos),
+            selectinload(Pessoa.funcionario).selectinload(Funcionario.cargo),
         )
         .order_by(Pessoa.nome)
     ).all()
@@ -112,6 +126,9 @@ def listarPessoas(database: Session = Depends(get_database), ctx: Contexto = Dep
 
 @router.get("/cpf/{cpf}", response_model=PessoaResponse)
 def buscarPorCpf(cpf: str, database: Session = Depends(get_database), ctx: Contexto = Depends(get_contexto)):
+    # usada ao adicionar pessoa num apartamento: gestão ou morador
+    if not ctx.edita_tudo and ctx.perfil != "MORADOR":
+        negar()
     try:
         cpf_limpo = normalizar_cpf(cpf)
     except ValueError:

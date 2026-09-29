@@ -1,6 +1,10 @@
 # ---------------------------------------------------------
 # USUÁRIOS (login)
 # ---------------------------------------------------------
+# Criação avulsa de login: só o ADM do sistema. Moradores,
+# síndicos etc. recebem login pelo "Dar acesso ao sistema"
+# (Router/Pessoa/AcessoPessoas.py).
+# ---------------------------------------------------------
 
 import uuid
 from datetime import datetime
@@ -11,6 +15,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from App.database import get_database
+from App.dependencies import exigir_admin_sistema
 from App.models import User
 from App.security import hash_password
 
@@ -34,13 +39,13 @@ class UserResponse(BaseModel):
 
 
 @router.post("/", response_model=UserResponse, status_code=status.HTTP_201_CREATED)
-def criarUser(user_data: UserCreate, database: Session = Depends(get_database)):
+def criarUser(user_data: UserCreate, database: Session = Depends(get_database), admin: User = Depends(exigir_admin_sistema)):
     email = user_data.email.lower()
 
     if database.scalar(select(User.id).where(User.email == email)):
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="E-mail já cadastrado")
 
-    user = User(full_name=user_data.full_name.strip(), email=email, password_hash=hash_password(user_data.password))
+    user = User(full_name=user_data.full_name.strip(), email=email, password_hash=hash_password(user_data.password), trocar_senha=True)
     database.add(user)
     database.commit()
     database.refresh(user)

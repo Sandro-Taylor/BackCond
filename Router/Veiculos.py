@@ -15,7 +15,7 @@ from sqlalchemy.orm import Session, selectinload
 
 from App.consultas import buscar_no_condominio, garantir_unico, salvar, texto
 from App.database import get_database
-from App.dependencies import Contexto, get_contexto
+from App.dependencies import Contexto, apartamentos_do_usuario, exigir_edicao_apartamento, get_contexto, negar
 from App.models import Apartamento, Veiculo
 from Router.Apartamentos import VeiculoDados, validar_veiculo
 from Router.Vagas import rotulo_apartamento
@@ -84,12 +84,18 @@ def carregar(database: Session, veiculo_id: uuid.UUID, condominio_id: uuid.UUID)
 
 @router.get("/", response_model=list[VeiculoLista])
 def listarVeiculos(database: Session = Depends(get_database), ctx: Contexto = Depends(get_contexto)):
-    veiculos = [montar(v) for v in database.scalars(consulta_veiculos(ctx.condominio_id)).all()]
+    consulta = consulta_veiculos(ctx.condominio_id)
+    if not ctx.ve_tudo:
+        if ctx.perfil != "MORADOR":
+            negar()
+        consulta = consulta.where(Veiculo.apartamento_id.in_(apartamentos_do_usuario(database, ctx)))
+    veiculos = [montar(v) for v in database.scalars(consulta).all()]
     return sorted(veiculos, key=lambda v: (v["apartamento_rotulo"], v["placa"] or ""))
 
 
 @router.post("/", response_model=VeiculoLista, status_code=status.HTTP_201_CREATED)
 def criarVeiculo(dados: VeiculoGeral, database: Session = Depends(get_database), ctx: Contexto = Depends(get_contexto)):
+    exigir_edicao_apartamento(database, ctx, dados.apartamento_id)
     apartamento = buscar_no_condominio(database, Apartamento, dados.apartamento_id, ctx.condominio_id, "Apartamento não encontrado")
     validar_veiculo(database, apartamento, dados)
     if dados.placa:
@@ -114,6 +120,8 @@ def criarVeiculo(dados: VeiculoGeral, database: Session = Depends(get_database),
 @router.put("/{veiculo_id}", response_model=VeiculoLista)
 def editarVeiculo(veiculo_id: uuid.UUID, dados: VeiculoGeralEditar, database: Session = Depends(get_database), ctx: Contexto = Depends(get_contexto)):
     veiculo = buscar_no_condominio(database, Veiculo, veiculo_id, ctx.condominio_id, "Veículo não encontrado")
+    exigir_edicao_apartamento(database, ctx, veiculo.apartamento_id)
+    exigir_edicao_apartamento(database, ctx, dados.apartamento_id)
     apartamento = buscar_no_condominio(database, Apartamento, dados.apartamento_id, ctx.condominio_id, "Apartamento não encontrado")
     validar_veiculo(database, apartamento, dados)
     if dados.placa:
@@ -135,5 +143,6 @@ def editarVeiculo(veiculo_id: uuid.UUID, dados: VeiculoGeralEditar, database: Se
 @router.delete("/{veiculo_id}", status_code=status.HTTP_204_NO_CONTENT)
 def excluirVeiculo(veiculo_id: uuid.UUID, database: Session = Depends(get_database), ctx: Contexto = Depends(get_contexto)):
     veiculo = buscar_no_condominio(database, Veiculo, veiculo_id, ctx.condominio_id, "Veículo não encontrado")
+    exigir_edicao_apartamento(database, ctx, veiculo.apartamento_id)
     database.delete(veiculo)
     salvar(database)

@@ -16,7 +16,7 @@ from sqlalchemy.orm import Session, selectinload
 
 from App.consultas import buscar_no_condominio, garantir_unico, salvar, texto
 from App.database import get_database
-from App.dependencies import Contexto, get_contexto
+from App.dependencies import Contexto, exigir_gestao, exigir_leitura_geral
 from App.models import Apartamento, TipoVaga, Vaga, Veiculo
 
 router = APIRouter(prefix="/vagas")
@@ -89,7 +89,7 @@ def validar_apartamento(database: Session, condominio_id: uuid.UUID, dados: Vaga
 
 
 @router.get("/", response_model=list[VagaLista])
-def listarVagas(database: Session = Depends(get_database), ctx: Contexto = Depends(get_contexto)):
+def listarVagas(database: Session = Depends(get_database), ctx: Contexto = Depends(exigir_leitura_geral)):
     vagas = database.scalars(
         select(Vaga)
         .where(Vaga.condominio_id == ctx.condominio_id)
@@ -100,7 +100,7 @@ def listarVagas(database: Session = Depends(get_database), ctx: Contexto = Depen
 
 
 @router.post("/", response_model=VagaLista, status_code=status.HTTP_201_CREATED)
-def criarVaga(dados: VagaDados, database: Session = Depends(get_database), ctx: Contexto = Depends(get_contexto)):
+def criarVaga(dados: VagaDados, database: Session = Depends(get_database), ctx: Contexto = Depends(exigir_gestao)):
     numero = dados.numero.strip()
     garantir_unico(database, Vaga, ctx.condominio_id, {"numero": numero}, f"Vaga {numero} já cadastrada neste condomínio")
     apartamento_id = validar_apartamento(database, ctx.condominio_id, dados)
@@ -119,7 +119,7 @@ def criarVaga(dados: VagaDados, database: Session = Depends(get_database), ctx: 
 
 
 @router.put("/{vaga_id}", response_model=VagaLista)
-def editarVaga(vaga_id: uuid.UUID, dados: VagaEditar, database: Session = Depends(get_database), ctx: Contexto = Depends(get_contexto)):
+def editarVaga(vaga_id: uuid.UUID, dados: VagaEditar, database: Session = Depends(get_database), ctx: Contexto = Depends(exigir_gestao)):
     vaga = buscar_no_condominio(database, Vaga, vaga_id, ctx.condominio_id, "Vaga não encontrada")
     numero = dados.numero.strip()
     garantir_unico(database, Vaga, ctx.condominio_id, {"numero": numero}, f"Vaga {numero} já cadastrada neste condomínio", ignorar_id=vaga.id)
@@ -140,7 +140,7 @@ def editarVaga(vaga_id: uuid.UUID, dados: VagaEditar, database: Session = Depend
 
 
 @router.delete("/{vaga_id}", status_code=status.HTTP_204_NO_CONTENT)
-def excluirVaga(vaga_id: uuid.UUID, database: Session = Depends(get_database), ctx: Contexto = Depends(get_contexto)):
+def excluirVaga(vaga_id: uuid.UUID, database: Session = Depends(get_database), ctx: Contexto = Depends(exigir_gestao)):
     # os veículos que usavam a vaga passam a usar as rotativas
     vaga = buscar_no_condominio(database, Vaga, vaga_id, ctx.condominio_id, "Vaga não encontrada")
     database.delete(vaga)

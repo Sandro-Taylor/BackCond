@@ -3,7 +3,9 @@ from datetime import date, datetime
 from enum import Enum
 from typing import Literal
 
-from sqlalchemy import Boolean, Date, DateTime, FetchedValue, ForeignKey, SmallInteger, String, Text, UniqueConstraint
+from decimal import Decimal
+
+from sqlalchemy import Boolean, Date, DateTime, FetchedValue, ForeignKey, Index, Numeric, SmallInteger, String, Text, UniqueConstraint, text
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from sqlalchemy.sql import func
@@ -20,15 +22,22 @@ class UserStatus(str, Enum):
     inativo = "inativo"
     bloqueado = "bloqueado"
 
-PerfilPessoa = Literal["MORADOR", "SINDICO", "CONSELHEIRO", "COLABORADOR", "PRESTADOR"]
+PerfilPessoa = Literal["MORADOR", "SINDICO", "CONSELHEIRO", "FUNCIONARIO", "PRESTADOR"]
+VinculoFuncionario = Literal["PROPRIO", "TERCEIRIZADO", "AUTONOMO"]
 TipoVaga = Literal["FIXA", "ROTATIVA"]
 TipoRelacao = Literal["PROPRIETARIO", "INQUILINO", "RESIDENTE"]
 Parentesco = Literal[
     "CONJUGE", "FILHO", "ENTEADO", "PAI_MAE", "SOGRO", "IRMAO",
     "AVO", "NETO", "OUTRO_PARENTE", "EMPREGADO_DOMESTICO", "OUTRO",
 ]
-PrioridadeTarefa = Literal["baixa", "media", "alta", "urgente"]
-StatusTarefa = Literal["pendente", "em_andamento", "concluida", "cancelada"]
+PrioridadeTarefa = Literal["BAIXA", "MEDIA", "ALTA", "URGENTE"]
+StatusTarefa = Literal["PENDENTE", "EM_ANDAMENTO", "CONCLUIDA", "CANCELADA"]
+TipoCota = Literal["ORDINARIA", "EXTRA"]
+StatusCota = Literal["ABERTA", "PAGA", "CANCELADA"]  # "ATRASADA" não é gravado: é ABERTA com vencimento passado
+FormaPagamento = Literal["PIX", "BOLETO", "DINHEIRO", "TRANSFERENCIA", "CARTAO", "OUTRO"]
+PrioridadeAviso = Literal["NORMAL", "IMPORTANTE", "URGENTE"]
+CategoriaChamado = Literal["DUVIDA", "SOLICITACAO", "RECLAMACAO", "SUGESTAO", "MANUTENCAO", "OUTRO"]
+StatusChamado = Literal["ABERTO", "RESPONDIDO", "ENCERRADO"]
 
 
 # =========================================================
@@ -64,6 +73,7 @@ class User(Base):
     full_name: Mapped[str] = mapped_column(String(150), nullable=False)
     status: Mapped[str] = mapped_column(String(20), nullable=False, default=UserStatus.ativo.value, server_default="ativo")
     admin_sistema: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default="false")
+    trocar_senha: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default="false")  # senha temporária: troca obrigatória no próximo login
     created_at: Mapped[datetime] = coluna_created_at()
     updated_at: Mapped[datetime] = coluna_updated_at()
 
@@ -86,6 +96,11 @@ class Condominio(Base):
     uf: Mapped[str | None] = mapped_column(String(2))
     telefone: Mapped[str | None] = mapped_column(String(11))
     email: Mapped[str | None] = mapped_column(String(255))
+    # financeiro: padrão usado ao gerar as cotas do mês
+    valor_cota: Mapped[Decimal | None] = mapped_column(Numeric(10, 2))
+    dia_vencimento: Mapped[int] = mapped_column(SmallInteger, nullable=False, default=10, server_default="10")
+    multa_percentual: Mapped[Decimal] = mapped_column(Numeric(5, 2), nullable=False, default=Decimal("2"), server_default="2")
+    juros_mensal: Mapped[Decimal] = mapped_column(Numeric(5, 2), nullable=False, default=Decimal("1"), server_default="1")
     ativo: Mapped[bool] = coluna_ativo()
     created_at: Mapped[datetime] = coluna_created_at()
     updated_at: Mapped[datetime] = coluna_updated_at()
@@ -117,7 +132,7 @@ class Pessoa(Base):
     usuario: Mapped["User | None"] = relationship()
     apartamentos: Mapped[list["PessoaApartamento"]] = relationship(back_populates="pessoa", cascade="all, delete-orphan", passive_deletes=True)
     veiculos: Mapped[list["Veiculo"]] = relationship(back_populates="pessoa", passive_deletes=True)  # pessoa = condutor; ao excluir, o veículo fica sem condutor
-    colaborador: Mapped["Colaborador | None"] = relationship(back_populates="pessoa", uselist=False, cascade="all, delete-orphan", passive_deletes=True)
+    funcionario: Mapped["Funcionario | None"] = relationship(back_populates="pessoa", uselist=False, cascade="all, delete-orphan", passive_deletes=True)  # ficha (perfil FUNCIONARIO)
 
 
 # =========================================================
@@ -209,68 +224,177 @@ class Veiculo(Base):
 
 
 # =========================================================
-# SETORES E COLABORADORES
+# FINANCEIRO (cotas condominiais)
 # =========================================================
 
-class Setor(Base):
-    __tablename__ = "setores"
+class Cota(Base):
+    __tablename__ = "cotas"
+    __table_args__ = (
+        # uma cota ordinária por apartamento em cada mês (extras podem ser várias)
+        Index("uq_cotas_ordinaria_mes", "apartamento_id", "competencia", unique=True, postgresql_where=text("tipo = 'ORDINARIA'")),
+    )
+    id: Mapped[uuid.UUID] = coluna_id()
+    condominio_id: Mapped[uuid.UUID] = coluna_condominio()
+    apartamento_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("apartamentos.id", ondelete="RESTRICT"), nullable=False, index=True)
+    competencia: Mapped[date] = mapped_column(Date, nullable=False, index=True)  # sempre o dia 1 do mês
+    tipo: Mapped[str] = mapped_column(String(10), nullable=False, default="ORDINARIA", server_default="ORDINARIA")
+    descricao: Mapped[str | None] = mapped_column(String(150))
+    valor: Mapped[Decimal] = mapped_column(Numeric(10, 2), nullable=False)
+    vencimento: Mapped[date] = mapped_column(Date, nullable=False)
+    status: Mapped[str] = mapped_column(String(10), nullable=False, default="ABERTA", server_default="ABERTA")
+    data_pagamento: Mapped[date | None] = mapped_column(Date)
+    valor_pago: Mapped[Decimal | None] = mapped_column(Numeric(10, 2))
+    forma_pagamento: Mapped[str | None] = mapped_column(String(20))
+    observacao: Mapped[str | None] = mapped_column(Text)
+    created_at: Mapped[datetime] = coluna_created_at()
+    updated_at: Mapped[datetime] = coluna_updated_at()
+
+    apartamento: Mapped["Apartamento"] = relationship()
+
+
+# =========================================================
+# COMUNICAÇÃO: QUADRO DE AVISOS E ATENDIMENTO (fale com o síndico)
+# =========================================================
+
+class Aviso(Base):
+    __tablename__ = "avisos"
+    id: Mapped[uuid.UUID] = coluna_id()
+    condominio_id: Mapped[uuid.UUID] = coluna_condominio()
+    autor_user_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"))
+    autor_nome: Mapped[str] = mapped_column(String(150), nullable=False)  # guardado para o histórico
+    titulo: Mapped[str] = mapped_column(String(150), nullable=False)
+    conteudo: Mapped[str] = mapped_column(Text, nullable=False)
+    prioridade: Mapped[str] = mapped_column(String(10), nullable=False, default="NORMAL", server_default="NORMAL")
+    fixado: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default="false")
+    expira_em: Mapped[date | None] = mapped_column(Date)  # depois dessa data some do quadro (continua no histórico)
+    ativo: Mapped[bool] = coluna_ativo()
+    created_at: Mapped[datetime] = coluna_created_at()
+    updated_at: Mapped[datetime] = coluna_updated_at()
+
+    leituras: Mapped[list["AvisoLeitura"]] = relationship(back_populates="aviso", cascade="all, delete-orphan", passive_deletes=True)
+
+
+class AvisoLeitura(Base):
+    # "li e estou ciente"
+    __tablename__ = "avisos_leituras"
+    aviso_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("avisos.id", ondelete="CASCADE"), primary_key=True)
+    user_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), primary_key=True)
+    lido_em: Mapped[datetime] = coluna_created_at()
+
+    aviso: Mapped["Aviso"] = relationship(back_populates="leituras")
+
+
+class Chamado(Base):
+    __tablename__ = "chamados"
+    __table_args__ = (UniqueConstraint("condominio_id", "numero"),)
+    id: Mapped[uuid.UUID] = coluna_id()
+    condominio_id: Mapped[uuid.UUID] = coluna_condominio()
+    numero: Mapped[int] = mapped_column(nullable=False)  # protocolo sequencial por condomínio
+    autor_user_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), index=True)
+    autor_pessoa_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey("pessoas.id", ondelete="SET NULL"))
+    autor_nome: Mapped[str] = mapped_column(String(150), nullable=False)
+    assunto: Mapped[str] = mapped_column(String(150), nullable=False)
+    categoria: Mapped[str] = mapped_column(String(15), nullable=False, default="OUTRO", server_default="OUTRO")
+    status: Mapped[str] = mapped_column(String(10), nullable=False, default="ABERTO", server_default="ABERTO")
+    lido_pela_gestao: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default="false")
+    lido_pelo_autor: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True, server_default="true")
+    encerrado_em: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    created_at: Mapped[datetime] = coluna_created_at()
+    updated_at: Mapped[datetime] = coluna_updated_at()
+
+    autor_pessoa: Mapped["Pessoa | None"] = relationship()
+    mensagens: Mapped[list["ChamadoMensagem"]] = relationship(
+        back_populates="chamado", cascade="all, delete-orphan", passive_deletes=True, order_by="ChamadoMensagem.created_at",
+    )
+
+
+class ChamadoMensagem(Base):
+    __tablename__ = "chamados_mensagens"
+    id: Mapped[uuid.UUID] = coluna_id()
+    chamado_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("chamados.id", ondelete="CASCADE"), nullable=False, index=True)
+    autor_user_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"))
+    autor_nome: Mapped[str] = mapped_column(String(150), nullable=False)
+    da_gestao: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default="false")  # resposta do síndico/ADM
+    texto: Mapped[str] = mapped_column(Text, nullable=False)
+    created_at: Mapped[datetime] = coluna_created_at()
+
+    chamado: Mapped["Chamado"] = relationship(back_populates="mensagens")
+
+
+# =========================================================
+# FUNCIONÁRIOS (ficha complementar da pessoa com perfil FUNCIONARIO)
+# =========================================================
+
+class Cargo(Base):
+    # porteiro, zelador, faxineiro... (lista própria de cada condomínio)
+    __tablename__ = "cargos"
     __table_args__ = (UniqueConstraint("condominio_id", "nome"),)
     id: Mapped[uuid.UUID] = coluna_id()
     condominio_id: Mapped[uuid.UUID] = coluna_condominio()
-    nome: Mapped[str] = mapped_column(String(120), nullable=False)
+    nome: Mapped[str] = mapped_column(String(80), nullable=False)
+    ativo: Mapped[bool] = coluna_ativo()
     created_at: Mapped[datetime] = coluna_created_at()
 
-    colaboradores: Mapped[list["Colaborador"]] = relationship(back_populates="setor")
 
-
-class Colaborador(Base):
-    __tablename__ = "colaboradores"
+class Funcionario(Base):
+    __tablename__ = "funcionarios"
     id: Mapped[uuid.UUID] = coluna_id()
     condominio_id: Mapped[uuid.UUID] = coluna_condominio()
     pessoa_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("pessoas.id", ondelete="CASCADE"), unique=True, nullable=False)
-    setor_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("setores.id", ondelete="RESTRICT"), nullable=False)
-    cargo: Mapped[str | None] = mapped_column(String(120))
+    cargo_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("cargos.id", ondelete="RESTRICT"), nullable=False, index=True)
+    vinculo: Mapped[str] = mapped_column(String(15), nullable=False, default="PROPRIO", server_default="PROPRIO")
+    empresa: Mapped[str | None] = mapped_column(String(150))  # terceirizada
+    turno: Mapped[str | None] = mapped_column(String(100))    # ex.: "12x36 noturno"
+    data_admissao: Mapped[date | None] = mapped_column(Date)
     created_at: Mapped[datetime] = coluna_created_at()
     updated_at: Mapped[datetime] = coluna_updated_at()
 
-    pessoa: Mapped["Pessoa"] = relationship(back_populates="colaborador")
-    setor: Mapped["Setor"] = relationship(back_populates="colaboradores")
+    pessoa: Mapped["Pessoa"] = relationship(back_populates="funcionario")
+    cargo: Mapped["Cargo"] = relationship()
+
+    @property
+    def cargo_nome(self) -> str:
+        return self.cargo.nome
 
 
 # =========================================================
-# PROJETOS (obras/melhorias) E TAREFAS
+# TAREFAS (designadas pela gestão)
 # =========================================================
-
-class Projeto(Base):
-    __tablename__ = "projetos"
-    id: Mapped[uuid.UUID] = coluna_id()
-    condominio_id: Mapped[uuid.UUID] = coluna_condominio()
-    nome: Mapped[str] = mapped_column(String(180), nullable=False)
-    descricao: Mapped[str | None] = mapped_column(Text)
-    ativo: Mapped[bool] = coluna_ativo()
-    data_arquivamento: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
-    created_at: Mapped[datetime] = coluna_created_at()
-    updated_at: Mapped[datetime] = coluna_updated_at()
-
-    tarefas: Mapped[list["Tarefa"]] = relationship(back_populates="projeto")
-
 
 class Tarefa(Base):
     __tablename__ = "tarefas"
+    __table_args__ = (UniqueConstraint("condominio_id", "numero"),)
     id: Mapped[uuid.UUID] = coluna_id()
     condominio_id: Mapped[uuid.UUID] = coluna_condominio()
-    projeto_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("projetos.id", ondelete="RESTRICT"), nullable=False, index=True)
-    responsavel_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("pessoas.id", ondelete="RESTRICT"), nullable=False, index=True)
-    titulo: Mapped[str] = mapped_column(String(240), nullable=False)
+    numero: Mapped[int] = mapped_column(nullable=False)  # sequencial por condomínio
+    titulo: Mapped[str] = mapped_column(String(150), nullable=False)
     descricao: Mapped[str | None] = mapped_column(Text)
-    prioridade: Mapped[str] = mapped_column(String(10), nullable=False, default="media", server_default="media")
-    status: Mapped[str] = mapped_column(String(20), nullable=False, default="pendente", server_default="pendente")
-    prazo: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
-    data_conclusao: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
-    ativo: Mapped[bool] = coluna_ativo()
-    data_arquivamento: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    local: Mapped[str | None] = mapped_column(String(100))
+    responsavel_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("pessoas.id", ondelete="RESTRICT"), nullable=False, index=True)
+    criado_por_user_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"))
+    criado_por_nome: Mapped[str] = mapped_column(String(150), nullable=False)
+    prioridade: Mapped[str] = mapped_column(String(10), nullable=False, default="MEDIA", server_default="MEDIA")
+    status: Mapped[str] = mapped_column(String(15), nullable=False, default="PENDENTE", server_default="PENDENTE")
+    prazo: Mapped[date | None] = mapped_column(Date)
+    concluida_em: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     created_at: Mapped[datetime] = coluna_created_at()
     updated_at: Mapped[datetime] = coluna_updated_at()
 
-    projeto: Mapped["Projeto"] = relationship(back_populates="tarefas")
     responsavel: Mapped["Pessoa"] = relationship()
+    historico: Mapped[list["TarefaHistorico"]] = relationship(
+        back_populates="tarefa", cascade="all, delete-orphan", passive_deletes=True, order_by="TarefaHistorico.created_at",
+    )
+
+
+class TarefaHistorico(Base):
+    # comentários e mudanças (criação, status, responsável, prazo)
+    __tablename__ = "tarefas_historico"
+    id: Mapped[uuid.UUID] = coluna_id()
+    tarefa_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("tarefas.id", ondelete="CASCADE"), nullable=False, index=True)
+    autor_user_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"))
+    autor_nome: Mapped[str] = mapped_column(String(150), nullable=False)
+    tipo: Mapped[str] = mapped_column(String(10), nullable=False)  # COMENTARIO ou EVENTO
+    texto: Mapped[str] = mapped_column(Text, nullable=False)
+    created_at: Mapped[datetime] = coluna_created_at()
+
+    tarefa: Mapped["Tarefa"] = relationship(back_populates="historico")
