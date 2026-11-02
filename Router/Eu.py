@@ -37,6 +37,7 @@ class EuResposta(BaseModel):
     email: str
     status: str
     admin_sistema: bool
+    responsavel: bool
     trocar_senha: bool
     created_at: datetime
     condominios: list[CondominioDoUsuario]
@@ -69,6 +70,7 @@ def eu(user: User = Depends(get_usuario_logado), database: Session = Depends(get
         "email": user.email,
         "status": user.status,
         "admin_sistema": user.admin_sistema,
+        "responsavel": user.responsavel,
         "trocar_senha": user.trocar_senha,
         "created_at": user.created_at,
         "condominios": condominios,

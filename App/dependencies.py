@@ -7,6 +7,8 @@
 # get_contexto         -> usuário + condomínio que ele está
 #                         acessando + perfil dele nesse condomínio
 # exigir_admin_sistema -> só o ADM do sistema passa
+# exigir_responsavel   -> só o RESPONSÁVEL (recebe o WhatsApp)
+# exigir_acesso_whatsapp -> ADM do sistema, RESPONSÁVEL ou SÍNDICO
 #
 # PERMISSÕES POR PERFIL (dentro do condomínio)
 #   ADM, SINDICO ............ veem e editam tudo
@@ -15,6 +17,12 @@
 #                             (pessoas, veículos); vagas só vê
 #   PRESTADOR ............... só a página inicial
 # Síndico e conselheiros são designados só pelo ADM do sistema.
+#
+# RESPONSÁVEL DO WHATSAPP: cada pessoa tem um (App/responsaveis.py).
+#   Padrão: o síndico do prédio. Ou um usuário marcado como
+#   RESPONSÁVEL pelo ADM em Usuários. Quem é o responsável
+#   recebe o pop-up das mensagens daquela pessoa e responde.
+#   O ADM conecta o número e vê todas as conversas.
 #
 # FINANCEIRO
 #   ADM, SINDICO ............ veem e lançam tudo
@@ -185,3 +193,20 @@ def exigir_financeiro(ctx: Contexto = Depends(get_contexto)) -> Contexto:
     if not ctx.ve_financeiro_tudo and ctx.perfil != "MORADOR":
         negar()
     return ctx
+
+
+# =========================================================
+# WHATSAPP
+# =========================================================
+
+def exigir_responsavel(usuario: User = Depends(get_current_user)) -> User:
+    if not usuario.responsavel:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Apenas o responsável recebe as mensagens do WhatsApp")
+    return usuario
+
+
+def exigir_acesso_whatsapp(usuario: User = Depends(get_current_user), database: Session = Depends(get_database)) -> User:
+    from App.responsaveis import e_sindico
+    if not (usuario.admin_sistema or usuario.responsavel or e_sindico(database, usuario)):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Apenas o administrador, os responsáveis e os síndicos acessam o WhatsApp")
+    return usuario

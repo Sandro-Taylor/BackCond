@@ -17,6 +17,7 @@ from App.consultas import buscar_no_condominio, garantir_unico, salvar
 from App.database import get_database
 from App.dependencies import Contexto, apartamentos_do_usuario, exigir_adm_para_perfil, get_contexto, negar
 from App.models import PerfilPessoa, Pessoa, PessoaApartamento, User
+from App.responsaveis import validar_responsavel_escolhido
 from Router.Pessoa.CadastrarPessoas import PessoaDados, PessoaResponse
 
 router = APIRouter()
@@ -43,6 +44,8 @@ def editarPessoa(pessoa_id: uuid.UUID, dados: PessoaUpdate, database: Session = 
         )
         if not da_unidade or (dados.perfil and dados.perfil != pessoa.perfil) or dados.ativo != pessoa.ativo:
             negar()
+        if "responsavel_user_id" in dados.model_fields_set and dados.responsavel_user_id != pessoa.responsavel_user_id:
+            negar()  # o responsável é definido pela gestão
 
     # mudar o perfil de/para síndico ou conselheiro, ou inativá-los: só o ADM
     if dados.perfil and dados.perfil != pessoa.perfil:
@@ -72,6 +75,11 @@ def editarPessoa(pessoa_id: uuid.UUID, dados: PessoaUpdate, database: Session = 
     pessoa.telefone = dados.telefone
     pessoa.data_nascimento = dados.data_nascimento
     pessoa.ativo = dados.ativo
+    if "responsavel_user_id" in dados.model_fields_set and dados.responsavel_user_id != pessoa.responsavel_user_id:
+        if not ctx.usuario.admin_sistema:
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Somente o administrador do sistema define o responsável")
+        validar_responsavel_escolhido(database, dados.responsavel_user_id)
+        pessoa.responsavel_user_id = dados.responsavel_user_id
     if dados.perfil:
         pessoa.perfil = dados.perfil
         if dados.perfil != "FUNCIONARIO":

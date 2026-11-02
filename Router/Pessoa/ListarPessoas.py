@@ -62,6 +62,9 @@ class PessoaLista(BaseModel):
     telefone: str | None
     data_nascimento: date | None
     ativo: bool
+    responsavel_user_id: uuid.UUID | None   # vazio = síndico do prédio
+    responsavel_nome: str | None
+    foto_arquivo_id: uuid.UUID | None       # foto no Google Drive (GET /arquivos/{id})
     created_at: datetime
     apartamentos: list[VinculoDaPessoa]
     veiculos: list[VeiculoDaPessoa]
@@ -79,6 +82,9 @@ def montar_pessoa(pessoa: Pessoa) -> dict:
         "telefone": pessoa.telefone,
         "data_nascimento": pessoa.data_nascimento,
         "ativo": pessoa.ativo,
+        "responsavel_user_id": pessoa.responsavel_user_id,
+        "responsavel_nome": pessoa.responsavel.full_name if pessoa.responsavel else None,
+        "foto_arquivo_id": pessoa.foto_arquivo_id,
         "created_at": pessoa.created_at,
         "apartamentos": [
             {
@@ -118,6 +124,7 @@ def listarPessoas(database: Session = Depends(get_database), ctx: Contexto = Dep
             selectinload(Pessoa.apartamentos).selectinload(PessoaApartamento.titular).selectinload(PessoaApartamento.pessoa),
             selectinload(Pessoa.veiculos),
             selectinload(Pessoa.funcionario).selectinload(Funcionario.cargo),
+            selectinload(Pessoa.responsavel),
         )
         .order_by(Pessoa.nome)
     ).all()

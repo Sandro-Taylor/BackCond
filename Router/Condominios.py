@@ -17,15 +17,16 @@ from zoneinfo import ZoneInfo
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel, ConfigDict, EmailStr, Field, field_validator
 from sqlalchemy import func, select
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, selectinload
 
 from App.database import get_database
 from App.acesso import ligar_login
 from App.consultas import buscar_no_condominio, garantir_unico, salvar
 from App.dependencies import Contexto, exigir_admin_sistema, exigir_gestao, get_contexto, get_current_user
-from App.models import Apartamento, Chamado, Condominio, Cota, Pessoa, Tarefa, User, Vaga, Veiculo
+from App.models import Apartamento, Chamado, Condominio, Cota, Pessoa, PessoaApartamento, Tarefa, User, Vaga, Veiculo
 from Router.Pessoa.CadastrarPessoas import PessoaDados
 from Router.Cargos import criar_cargos_padrao
+from Router.Vagas import rotulo_apartamento
 from App.validacoes import normalizar_cep, normalizar_cnpj, normalizar_email, normalizar_telefone, normalizar_uf
 
 router = APIRouter(prefix="/condominios")
@@ -124,6 +125,7 @@ class SindicoResumo(BaseModel):
 class CondominioPainel(BaseModel):
     condominio: CondominioResposta
     sindicos: list[SindicoResumo]
+    conselheiros: list[SindicoResumo]
     total_apartamentos: int
     total_pessoas: int
     total_usuarios: int          # pessoas com acesso ao sistema
@@ -140,8 +142,19 @@ class SindicoDesignado(BaseModel):
     login_existente: bool
 
 
+class MembroGestao(BaseModel):
+    pessoa_id: uuid.UUID
+    nome: str
+    perfil: str                  # SINDICO ou CONSELHEIRO
+    unidade: str | None          # apartamento principal
+    telefone: str | None         # só do síndico
+    email: str | None            # só do síndico
+    foto_arquivo_id: uuid.UUID | None
+
+
 class ResumoCondominio(BaseModel):
     condominio: CondominioResposta
+    gestao: list[MembroGestao]   # síndico(s) e conselheiros
     total_apartamentos: int
     total_vagas: int
     vagas_fixas: int
@@ -210,8 +223,26 @@ async def resumoCondominio(database: Session = Depends(get_database), ctx: Conte
     def contar(modelo, *filtros) -> int:
         return database.scalar(select(func.count()).select_from(modelo).where(modelo.condominio_id == ctx.condominio_id, *filtros)) or 0
 
+    # síndico e conselheiros (página inicial)
+    gestao = database.scalars(
+        select(Pessoa)
+        .where(Pessoa.condominio_id == ctx.condominio_id, Pessoa.perfil.in_(["SINDICO", "CONSELHEIRO"]), Pessoa.ativo.is_(True))
+        .options(selectinload(Pessoa.apartamentos).selectinload(PessoaApartamento.apartamento))
+    ).all()
+
+    def unidade(pessoa: Pessoa) -> str | None:
+        vinculos = sorted((v for v in pessoa.apartamentos if v.ativo and v.apartamento), key=lambda v: not v.principal)
+        return rotulo_apartamento(vinculos[0].apartamento) if vinculos else None
+
+    membros = sorted(gestao, key=lambda p: (p.perfil != "SINDICO", p.nome))
     return {
         "condominio": condominio,
+        "gestao": [{
+            "pessoa_id": p.id, "nome": p.nome, "perfil": p.perfil, "unidade": unidade(p),
+            "telefone": p.telefone if p.perfil == "SINDICO" else None,
+            "email": p.email if p.perfil == "SINDICO" else None,
+            "foto_arquivo_id": p.foto_arquivo_id,
+        } for p in membros],
         "total_apartamentos": contar(Apartamento),
         "total_vagas": contar(Vaga),
         "vagas_fixas": contar(Vaga, Vaga.tipo == "FIXA"),
@@ -239,14 +270,17 @@ async def painelCondominios(database: Session = Depends(get_database), admin: Us
     tarefas = por_condominio(Tarefa, Tarefa.status.in_(("PENDENTE", "EM_ANDAMENTO")), Tarefa.prazo < hoje)
 
     sindicos: dict = {}
-    for pessoa in database.scalars(select(Pessoa).where(Pessoa.perfil == "SINDICO", Pessoa.ativo.is_(True)).order_by(Pessoa.nome)):
-        sindicos.setdefault(pessoa.condominio_id, []).append(
+    conselheiros: dict = {}
+    for pessoa in database.scalars(select(Pessoa).where(Pessoa.perfil.in_(("SINDICO", "CONSELHEIRO")), Pessoa.ativo.is_(True)).order_by(Pessoa.nome)):
+        destino = sindicos if pessoa.perfil == "SINDICO" else conselheiros
+        destino.setdefault(pessoa.condominio_id, []).append(
             {"pessoa_id": pessoa.id, "nome": pessoa.nome, "email": pessoa.email, "tem_acesso": pessoa.user_id is not None}
         )
 
     return [{
         "condominio": c,
         "sindicos": sindicos.get(c.id, []),
+        "conselheiros": conselheiros.get(c.id, []),
         "total_apartamentos": apartamentos.get(c.id, 0),
         "total_pessoas": pessoas.get(c.id, 0),
         "total_usuarios": usuarios.get(c.id, 0),
@@ -307,6 +341,38 @@ async def designarSindico(condominio_id: uuid.UUID, dados: DesignarSindico, data
 
     salvar(database, "Não foi possível designar o síndico: CPF ou e-mail já em uso neste condomínio")
     return {"pessoa_id": pessoa.id, "nome": pessoa.nome, "email": pessoa.email, "senha_temporaria": senha, "login_existente": senha is None}
+
+
+class DefinirConselheiros(BaseModel):
+    pessoa_ids: list[uuid.UUID]   # lista completa: quem sair da lista volta a ser morador
+
+
+@router.put("/{condominio_id}/conselheiros", response_model=list[SindicoResumo])
+async def definirConselheiros(condominio_id: uuid.UUID, dados: DefinirConselheiros, database: Session = Depends(get_database), admin: User = Depends(exigir_admin_sistema)):
+    # conselheiros: qualquer pessoa ativa do condomínio (menos o síndico); só o ADM do sistema define
+    buscar_condominio_ou_404(condominio_id, database)
+    escolhidos = set(dados.pessoa_ids)
+    pessoas = database.scalars(
+        select(Pessoa).where(Pessoa.condominio_id == condominio_id, (Pessoa.id.in_(escolhidos)) | (Pessoa.perfil == "CONSELHEIRO"))
+        .options(selectinload(Pessoa.funcionario))
+    ).all()
+    encontrados = {p.id for p in pessoas}
+    if escolhidos - encontrados:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Há pessoas que não são deste condomínio")
+
+    for pessoa in pessoas:
+        if pessoa.id in escolhidos:
+            if pessoa.perfil == "SINDICO":
+                raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"{pessoa.nome} é o síndico e não pode ser conselheiro")
+            if not pessoa.ativo:
+                raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"{pessoa.nome} está inativo(a)")
+            pessoa.perfil = "CONSELHEIRO"
+            pessoa.funcionario = None  # a ficha de funcionário só existe para FUNCIONARIO
+        elif pessoa.perfil == "CONSELHEIRO":
+            pessoa.perfil = "MORADOR"  # saiu do conselho
+    salvar(database)
+    return [{"pessoa_id": p.id, "nome": p.nome, "email": p.email, "tem_acesso": p.user_id is not None}
+            for p in sorted(pessoas, key=lambda p: p.nome) if p.id in escolhidos]
 
 
 @router.get("/{condominio_id}", response_model=CondominioResposta)

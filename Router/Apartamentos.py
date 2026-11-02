@@ -13,6 +13,7 @@
 
 import uuid
 from datetime import date
+from decimal import Decimal
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel, ConfigDict, Field, field_validator
@@ -26,6 +27,7 @@ from App.dependencies import (
     Contexto, apartamentos_do_usuario, exigir_edicao_apartamento, exigir_gestao, exigir_leitura_apartamento,
     get_contexto, negar,
 )
+from App.responsaveis import validar_responsavel_escolhido
 from App.models import Apartamento, Cota, Parentesco, Pessoa, PessoaApartamento, TipoRelacao, Vaga, Veiculo
 from App.validacoes import normalizar_placa
 from Router.Pessoa.CadastrarPessoas import PessoaDados
@@ -155,6 +157,7 @@ class ApartamentoResumo(BaseModel):
     andar: int | None
     observacao: str | None
     ativo: bool
+    fracao_ideal: Decimal | None = None
     ocupacao: str              # OCUPADO_PROPRIETARIO | ALUGADO | VAZIO
     proprietarios: list[str]
     inquilinos: list[str]
@@ -170,6 +173,7 @@ class ApartamentoDetalhe(BaseModel):
     andar: int | None
     observacao: str | None
     ativo: bool
+    fracao_ideal: Decimal | None = None
     ocupacao: str
     pessoas: list[VinculoResposta]
     vagas: list[VagaResposta]
@@ -224,6 +228,7 @@ def montar_detalhe(apartamento: Apartamento) -> dict:
         "andar": apartamento.andar,
         "observacao": apartamento.observacao,
         "ativo": apartamento.ativo,
+        "fracao_ideal": apartamento.fracao_ideal,
         "ocupacao": calcular_ocupacao(apartamento.pessoas),
         "pessoas": vinculos,
         "vagas": sorted(apartamento.vagas, key=lambda v: (len(v.numero), v.numero)),
@@ -322,6 +327,7 @@ def listarApartamentos(database: Session = Depends(get_database), ctx: Contexto 
             "andar": apartamento.andar,
             "observacao": apartamento.observacao,
             "ativo": apartamento.ativo,
+            "fracao_ideal": apartamento.fracao_ideal,
             "ocupacao": calcular_ocupacao(apartamento.pessoas),
             "proprietarios": [v.pessoa.nome for v in ativos if v.tipo_relacao == "PROPRIETARIO"],
             "inquilinos": [v.pessoa.nome for v in ativos if v.tipo_relacao == "INQUILINO"],
@@ -404,6 +410,9 @@ def adicionarPessoa(apartamento_id: uuid.UUID, dados: AdicionarPessoa, database:
                         status_code=status.HTTP_409_CONFLICT,
                         detail=f"Este CPF já pertence a {existente.nome}. Use a busca por CPF para ligar a pessoa ao apartamento.",
                     )
+            if nova.responsavel_user_id and not ctx.usuario.admin_sistema:
+                raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Somente o administrador do sistema define o responsável")
+            validar_responsavel_escolhido(database, nova.responsavel_user_id)
             pessoa = Pessoa(
                 condominio_id=cid,
                 nome=nova.nome.strip(),
@@ -411,6 +420,7 @@ def adicionarPessoa(apartamento_id: uuid.UUID, dados: AdicionarPessoa, database:
                 email=nova.email,
                 telefone=nova.telefone,
                 data_nascimento=nova.data_nascimento,
+                responsavel_user_id=nova.responsavel_user_id,
             )
             database.add(pessoa)
             database.flush()

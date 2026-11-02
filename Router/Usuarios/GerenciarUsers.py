@@ -3,7 +3,8 @@
 # ---------------------------------------------------------
 # Lista todos os logins do sistema com os condomínios e o
 # perfil em cada um; bloqueia/desbloqueia e gera nova senha
-# temporária. Só o ADM do sistema.
+# temporária; marca quem é RESPONSÁVEL (recebe o WhatsApp).
+# Só o ADM do sistema.
 # ---------------------------------------------------------
 
 import uuid
@@ -12,7 +13,7 @@ from typing import Literal
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel
-from sqlalchemy import select
+from sqlalchemy import select, update
 from sqlalchemy.orm import Session
 
 from App.acesso import gerar_senha_temporaria
@@ -38,6 +39,7 @@ class UsuarioLista(BaseModel):
     email: str
     status: str
     admin_sistema: bool
+    responsavel: bool
     trocar_senha: bool
     created_at: datetime
     condominios: list[AcessoEmCondominio]
@@ -45,6 +47,10 @@ class UsuarioLista(BaseModel):
 
 class MudarStatus(BaseModel):
     status: Literal["ativo", "bloqueado"]
+
+
+class MudarResponsavel(BaseModel):
+    responsavel: bool
 
 
 class NovaSenha(BaseModel):
@@ -72,7 +78,7 @@ def listarUsuarios(database: Session = Depends(get_database), admin: User = Depe
 
     usuarios = database.scalars(select(User).order_by(User.admin_sistema.desc(), User.full_name)).all()
     return [{
-        "id": u.id, "full_name": u.full_name, "email": u.email, "status": u.status, "admin_sistema": u.admin_sistema,
+        "id": u.id, "full_name": u.full_name, "email": u.email, "status": u.status, "admin_sistema": u.admin_sistema, "responsavel": u.responsavel,
         "trocar_senha": u.trocar_senha, "created_at": u.created_at, "condominios": acessos.get(u.id, []),
     } for u in usuarios]
 
@@ -94,3 +100,13 @@ def gerarNovaSenha(user_id: uuid.UUID, database: Session = Depends(get_database)
     usuario.trocar_senha = True
     salvar(database)
     return {"email": usuario.email, "senha_temporaria": senha}
+
+
+@router.patch("/{user_id}/responsavel", status_code=status.HTTP_204_NO_CONTENT)
+def mudarResponsavel(user_id: uuid.UUID, dados: MudarResponsavel, database: Session = Depends(get_database), admin: User = Depends(exigir_admin_sistema)):
+    # RESPONSÁVEL: recebe e responde as mensagens do WhatsApp
+    usuario = buscar_usuario(database, user_id)
+    usuario.responsavel = dados.responsavel
+    if not dados.responsavel:  # as pessoas dele voltam para o padrão (síndico do prédio)
+        database.execute(update(Pessoa).where(Pessoa.responsavel_user_id == usuario.id).values(responsavel_user_id=None))
+    salvar(database)
