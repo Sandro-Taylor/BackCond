@@ -220,7 +220,7 @@ async def listarResponsaveis(database: Session = Depends(get_database), ctx: Con
 
 @router.get("/", response_model=list[TarefaResposta])
 async def listarTarefas(database: Session = Depends(get_database), ctx: Contexto = Depends(exigir_acesso_tarefas)):
-    tarefas = database.scalars(consulta_tarefas(ctx).order_by(Tarefa.prazo.asc().nulls_last(), Tarefa.numero.desc())).all()
+    tarefas = database.scalars(consulta_tarefas(ctx).order_by(Tarefa.prazo.is_(None), Tarefa.prazo.asc(), Tarefa.numero.desc())).all()
     referencia = hoje()
     return [montar(t, ctx, referencia) for t in tarefas]
 

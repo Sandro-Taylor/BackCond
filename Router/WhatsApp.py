@@ -15,6 +15,9 @@
 #   Síndico vê só as conversas que são dele; RESPONSÁVEL e ADM veem todas.
 # ROBÔ (App/bot_whatsapp.py): responde primeiro com um menu. O pop-up
 #   só aparece quando a pessoa pede atendimento (modo ATENDENTE).
+#   O robô só responde mensagem NOVA de um contato (enviada há no máximo
+#   MAX_IDADE_RESPOSTA). Mensagens antigas que a Evolution reenvia ao
+#   conectar/sincronizar o número são só gravadas: nunca disparam resposta.
 #   ADM ........... conecta o número (QR code) e vê/responde as conversas
 # ---------------------------------------------------------
 
@@ -25,7 +28,7 @@ from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from pydantic import BaseModel, Field, field_validator
-from sqlalchemy import func, select
+from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -41,6 +44,7 @@ router = APIRouter(prefix="/whatsapp")
 log = logging.getLogger("uvicorn.error")
 
 LIMITE_MENSAGENS = 200  # mensagens carregadas ao abrir uma conversa
+MAX_IDADE_RESPOSTA = 120  # segundos: mensagem mais velha que isso não recebe resposta do robô
 
 
 # =========================================================
@@ -167,6 +171,23 @@ def exigir_evolution(estado: str):
         )
 
 
+def enviada_em(item: dict) -> datetime | None:
+    # horário em que o contato enviou (messageTimestamp: segundos; às vezes texto ou {"low": n})
+    valor = item.get("messageTimestamp")
+    if isinstance(valor, dict):
+        valor = valor.get("low")
+    try:
+        return datetime.fromtimestamp(int(valor), timezone.utc)
+    except (TypeError, ValueError, OverflowError, OSError):
+        return None
+
+
+def mensagem_nova(item: dict) -> bool:
+    # só mensagem recém-enviada pode acionar o robô; sem horário = não responde (mais seguro)
+    quando = enviada_em(item)
+    return quando is not None and (datetime.now(timezone.utc) - quando).total_seconds() <= MAX_IDADE_RESPOSTA
+
+
 def registrar_mensagem(database: Session, item: dict):
     # grava uma mensagem vinda do webhook (recebida do contato ou enviada pelo próprio celular)
     chave = item.get("key") or {}
@@ -211,6 +232,9 @@ def registrar_mensagem(database: Session, item: dict):
         database.rollback()  # chegou em duplicidade ao mesmo tempo: a outra cópia já foi gravada
         return
     if not de_mim:
+        if not mensagem_nova(item):
+            log.info("WhatsApp: mensagem antiga de %s gravada sem resposta do robô", conversa.telefone or conversa.jid)
+            return
         try:
             robo.processar(database, conversa, mensagem)  # robô responde ou passa para uma pessoa
         except Exception:
@@ -356,7 +380,7 @@ def devolverAoRobo(conversa_id: uuid.UUID, database: Session = Depends(get_datab
 @router.get("/novidades", response_model=NovidadesResposta)
 def novidades(desde: datetime | None = None, database: Session = Depends(get_database), usuario: User = Depends(exigir_acesso_whatsapp)):
     # primeira chamada (sem "desde") só devolve a hora do servidor, para não abrir pop-up de mensagens antigas
-    agora = database.scalar(select(func.now()))
+    agora = datetime.now(timezone.utc)
     if desde is None:
         return {"agora": agora, "mensagens": []}
     if desde.tzinfo is None:

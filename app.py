@@ -6,8 +6,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy import text
 
 from config import settings
-from App.database import Base, engine
-from App.models import Arquivo, DriveConexao, WhatsappConversa, WhatsappMensagem
+from App.database import engine
 from Router.Login import router as login
 from Router.Usuarios.CriarUsers import router as criarUser
 from Router.Usuarios.GerenciarUsers import router as gerenciarUsers
@@ -36,19 +35,7 @@ from Router.Manutencoes import router as manutencoes
 
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
-    # tabelas do WhatsApp (teste): criadas se ainda não existirem
-    Base.metadata.create_all(engine, tables=[WhatsappConversa.__table__, WhatsappMensagem.__table__, DriveConexao.__table__, Arquivo.__table__])
-    # categoria RESPONSÁVEL (recebe o WhatsApp): coluna nova em users
-    with engine.begin() as connection:
-        connection.execute(text("ALTER TABLE users ADD COLUMN IF NOT EXISTS responsavel boolean NOT NULL DEFAULT false"))
-        connection.execute(text("ALTER TABLE pessoas ADD COLUMN IF NOT EXISTS responsavel_user_id uuid REFERENCES users(id) ON DELETE SET NULL"))
-        # robô do WhatsApp
-        connection.execute(text("ALTER TABLE whatsapp_conversas ADD COLUMN IF NOT EXISTS modo varchar(10) NOT NULL DEFAULT 'ROBO'"))
-        connection.execute(text("ALTER TABLE whatsapp_conversas ADD COLUMN IF NOT EXISTS atendente_desde timestamptz"))
-        connection.execute(text("ALTER TABLE whatsapp_conversas ADD COLUMN IF NOT EXISTS bot_dados text"))
-        connection.execute(text("ALTER TABLE whatsapp_mensagens ADD COLUMN IF NOT EXISTS para_atendente boolean NOT NULL DEFAULT false"))
-        # foto da pessoa (Google Drive)
-        connection.execute(text("ALTER TABLE pessoas ADD COLUMN IF NOT EXISTS foto_arquivo_id uuid REFERENCES arquivos(id) ON DELETE SET NULL"))
+    # o banco já tem todas as tabelas (nada é alterado ao iniciar)
     yield
 
 
