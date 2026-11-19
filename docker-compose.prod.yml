@@ -1,0 +1,79 @@
+# PRODUÇÃO (servidor DigitalOcean)
+# Subir:     docker compose -f docker-compose.prod.yml up -d --build
+# Precisa da pasta FrontCond ao lado desta (../FrontCond) e do .env nesta pasta.
+services:
+  database:
+    image: postgres:17-alpine
+    container_name: condominio_postgres
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      TZ: America/Sao_Paulo
+      PGTZ: America/Sao_Paulo
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./backups:/backups
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  whatsapp:
+    image: evoapicloud/evolution-api:v2.3.7
+    container_name: condominio_whatsapp
+    restart: unless-stopped
+    depends_on:
+      database:
+        condition: service_healthy
+    environment:
+      TZ: America/Sao_Paulo
+      SERVER_URL: http://whatsapp:8080
+      AUTHENTICATION_API_KEY: ${EVOLUTION_API_KEY}
+      DATABASE_ENABLED: "true"
+      DATABASE_PROVIDER: postgresql
+      DATABASE_CONNECTION_URI: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@database:5432/${POSTGRES_DB}?schema=evolution
+      DATABASE_CONNECTION_CLIENT_NAME: condominio
+      CACHE_REDIS_ENABLED: "false"
+      CACHE_LOCAL_ENABLED: "true"
+      DEL_INSTANCE: "false"
+      LOG_LEVEL: ERROR,WARN,INFO
+    volumes:
+      - evolution_instances:/evolution/instances
+
+  backend:
+    build: .
+    container_name: condominio_backend
+    restart: unless-stopped
+    depends_on:
+      database:
+        condition: service_healthy
+    env_file: .env
+    environment:
+      TZ: America/Sao_Paulo
+      # endereços internos do Docker (valem mais que o .env)
+      DATABASE_URL: postgresql+psycopg://${POSTGRES_USER}:${POSTGRES_PASSWORD}@database:5432/${POSTGRES_DB}
+      EVOLUTION_URL: http://whatsapp:8080
+      WHATSAPP_WEBHOOK_URL: http://backend:8000/whatsapp/webhook
+      FRONTEND_URL: ${SITE_URL:-http://67.205.173.252}
+      GOOGLE_REDIRECT_URI: ${SITE_URL:-http://67.205.173.252}/api/drive/callback
+
+  web:
+    build: ../FrontCond
+    container_name: condominio_web
+    restart: unless-stopped
+    depends_on:
+      - backend
+    ports:
+      - "80:80"
+      - "443:443"
+    environment:
+      # sem domínio: ":80". Com domínio: SITE_ADDRESS=sistema.seudominio.com.br no .env (HTTPS automático)
+      SITE_ADDRESS: ${SITE_ADDRESS:-:80}
+    volumes:
+      - caddy_data:/data
+
+volumes:
+  postgres_data:
+  evolution_instances:
+  caddy_data:
