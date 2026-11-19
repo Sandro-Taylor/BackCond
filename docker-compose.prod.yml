@@ -55,8 +55,8 @@ services:
       DATABASE_URL: postgresql+psycopg://${POSTGRES_USER}:${POSTGRES_PASSWORD}@database:5432/${POSTGRES_DB}
       EVOLUTION_URL: http://whatsapp:8080
       WHATSAPP_WEBHOOK_URL: http://backend:8000/whatsapp/webhook
-      FRONTEND_URL: ${SITE_URL:-http://67.205.173.252}
-      GOOGLE_REDIRECT_URI: ${SITE_URL:-http://67.205.173.252}/api/drive/callback
+      FRONTEND_URL: ${SITE_URL:-http://67.205.173.252:8088}
+      GOOGLE_REDIRECT_URI: ${SITE_URL:-http://67.205.173.252:8088}/api/drive/callback
 
   web:
     build: ../FrontCond
@@ -64,12 +64,11 @@ services:
     restart: unless-stopped
     depends_on:
       - backend
+    # a porta 80 do servidor já é do nginx (site do Ragnarok): o sistema fica na 8088
     ports:
-      - "80:80"
-      - "443:443"
+      - "${WEB_PORT:-8088}:80"
     environment:
-      # sem domínio: ":80". Com domínio: SITE_ADDRESS=sistema.seudominio.com.br no .env (HTTPS automático)
-      SITE_ADDRESS: ${SITE_ADDRESS:-:80}
+      SITE_ADDRESS: ":80"
     volumes:
       - caddy_data:/data
 
